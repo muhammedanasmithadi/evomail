@@ -1,10 +1,89 @@
 #include "evomail.h"
 
-static void
-json_append_indent (GString *out, guint depth)
+#include <glib.h>
+
+gchar *
+format_date (gint64 date)
 {
-	for (guint i = 0; i < depth; i++)
-		g_string_append (out, "  ");
+	GDateTime *dt;
+	gchar *result;
+
+	if (date <= 0)
+		return g_strdup ("");
+
+	dt = g_date_time_new_from_unix_local (date);
+	if (dt == NULL)
+		return g_strdup ("");
+
+	result = g_date_time_format (dt, "%Y-%m-%d %H:%M");
+	g_date_time_unref (dt);
+	return result;
+}
+
+static gchar *
+format_flags (guint32 flags)
+{
+	GString *out = g_string_new (NULL);
+
+	if ((flags & CAMEL_MESSAGE_SEEN) == 0)
+		g_string_append_c (out, 'U');
+	if (flags & CAMEL_MESSAGE_FLAGGED)
+		g_string_append_c (out, 'F');
+	if (flags & CAMEL_MESSAGE_ANSWERED)
+		g_string_append_c (out, 'A');
+	if (flags & CAMEL_MESSAGE_DELETED)
+		g_string_append_c (out, 'D');
+	if (flags & CAMEL_MESSAGE_ATTACHMENTS)
+		g_string_append_c (out, 'T');
+	if (out->len == 0)
+		g_string_append_c (out, '-');
+
+	return g_string_free (out, FALSE);
+}
+
+static gchar *
+truncate_utf8 (const gchar *text, glong max_chars)
+{
+	glong length;
+
+	if (text == NULL || *text == '\0')
+		return g_strdup ("");
+
+	length = g_utf8_strlen (text, -1);
+	if (length <= max_chars)
+		return g_strdup (text);
+
+	return g_strndup (text, g_utf8_offset_to_pointer (text, max_chars) - text);
+}
+
+static gchar *
+default_filename (const gchar *filename, guint number)
+{
+	if (filename != NULL && *filename != '\0')
+		return g_strdup (filename);
+	return g_strdup_printf ("attachment-%u", number);
+}
+
+void
+print_message_table (GPtrArray *messages)
+{
+	g_print ("%-10s %-16s %-5s %-28s %s\n",
+		 "UID", "DATE", "FLAGS", "FROM", "SUBJECT");
+
+	for (guint i = 0; i < messages->len; i++) {
+		EvoMessage *msg = g_ptr_array_index (messages, i);
+		gchar *flags = format_flags (msg->flags);
+		gchar *from = truncate_utf8 (msg->from, 28);
+		gchar *subject = truncate_utf8 (msg->subject, 80);
+
+		g_print ("%-10s %-16s %-5s %-28s %s\n",
+			 msg->uid, msg->date, flags, from,
+			 (subject != NULL && *subject != '\0') ? subject : "(no subject)");
+
+		g_free (flags);
+		g_free (from);
+		g_free (subject);
+	}
 }
 
 void
@@ -50,122 +129,24 @@ json_string (GString *out, const gchar *value)
 	g_string_append_c (out, '"');
 }
 
-gchar *
-format_date (gint64 date)
-{
-	GDateTime *dt;
-	gchar *result;
-
-	if (date <= 0)
-		return g_strdup ("");
-
-	dt = g_date_time_new_from_unix_local (date);
-	if (dt == NULL)
-		return g_strdup ("");
-
-	result = g_date_time_format (dt, "%Y-%m-%d %H:%M");
-	g_date_time_unref (dt);
-	return result;
-}
-
-static gchar *
-format_date_iso (gint64 date)
-{
-	GDateTime *dt;
-	gchar *result;
-
-	if (date <= 0)
-		return g_strdup ("");
-
-	dt = g_date_time_new_from_unix_utc (date);
-	if (dt == NULL)
-		return g_strdup ("");
-
-	result = g_date_time_format (dt, "%Y-%m-%dT%H:%M:%SZ");
-	g_date_time_unref (dt);
-	return result;
-}
-
-gchar *
-format_flags (guint32 flags)
-{
-	GString *out = g_string_new (NULL);
-
-	if ((flags & CAMEL_MESSAGE_SEEN) == 0)
-		g_string_append_c (out, 'U');
-	if (flags & CAMEL_MESSAGE_FLAGGED)
-		g_string_append_c (out, 'F');
-	if (flags & CAMEL_MESSAGE_ANSWERED)
-		g_string_append_c (out, 'A');
-	if (flags & CAMEL_MESSAGE_DELETED)
-		g_string_append_c (out, 'D');
-	if (flags & CAMEL_MESSAGE_ATTACHMENTS)
-		g_string_append_c (out, 'T');
-	if (out->len == 0)
-		g_string_append_c (out, '-');
-
-	return g_string_free (out, FALSE);
-}
-
-static gchar *
-truncate_utf8 (const gchar *text, glong max_chars)
-{
-	glong length;
-
-	if (text == NULL || *text == '\0')
-		return g_strdup ("");
-
-	length = g_utf8_strlen (text, -1);
-	if (length <= max_chars)
-		return g_strdup (text);
-
-	return g_strndup (text, g_utf8_offset_to_pointer (text, max_chars) - text);
-}
-
-void
-print_message_table (GPtrArray *messages)
-{
-	g_print ("%-10s %-16s %-5s %-28s %s\n",
-		 "UID", "DATE", "FLAGS", "FROM", "SUBJECT");
-
-	for (guint i = 0; i < messages->len; i++) {
-		MsgSummary *msg = g_ptr_array_index (messages, i);
-		gchar *date = format_date (msg->date);
-		gchar *flags = format_flags (msg->flags);
-		gchar *from = truncate_utf8 (msg->from, 28);
-		gchar *subject = truncate_utf8 (msg->subject, 80);
-
-		g_print ("%-10s %-16s %-5s %-28s %s\n",
-			 msg->uid, date, flags, from,
-			 (subject != NULL && *subject != '\0') ? subject : "(no subject)");
-
-		g_free (date);
-		g_free (flags);
-		g_free (from);
-		g_free (subject);
-	}
-}
-
 void
 print_message_json (GPtrArray *messages)
 {
 	GString *out = g_string_new ("[\n");
 
 	for (guint i = 0; i < messages->len; i++) {
-		MsgSummary *msg = g_ptr_array_index (messages, i);
-		gchar *iso = format_date_iso (msg->date);
+		EvoMessage *msg = g_ptr_array_index (messages, i);
 
-		json_append_indent (out, 1);
-		g_string_append (out, "{\"uid\":");
+		g_string_append (out, "  {\"uid\":");
 		json_string (out, msg->uid);
 		g_string_append (out, ",\"from\":");
 		json_string (out, msg->from);
 		g_string_append (out, ",\"subject\":");
 		json_string (out, msg->subject);
-		g_string_append_printf (out, ",\"date\":%" G_GINT64_FORMAT,
-					msg->date);
+		g_string_append (out, ",\"date\":");
+		json_string (out, msg->date);
 		g_string_append (out, ",\"date_iso\":");
-		json_string (out, iso);
+		json_string (out, msg->date);
 		g_string_append_printf (out, ",\"flags\":%u", msg->flags);
 		g_string_append_printf (out, ",\"unread\":%s",
 					(msg->flags & CAMEL_MESSAGE_SEEN) ? "false" : "true");
@@ -175,8 +156,6 @@ print_message_json (GPtrArray *messages)
 		if (i + 1 < messages->len)
 			g_string_append_c (out, ',');
 		g_string_append_c (out, '\n');
-
-		g_free (iso);
 	}
 
 	g_string_append (out, "]\n");
@@ -184,16 +163,8 @@ print_message_json (GPtrArray *messages)
 	g_string_free (out, TRUE);
 }
 
-static gchar *
-default_filename (const gchar *filename, guint number)
-{
-	if (filename != NULL && *filename != '\0')
-		return g_strdup (filename);
-	return g_strdup_printf ("attachment-%u", number);
-}
-
 void
-print_read_message (ReadMessage *msg)
+print_read_message (EvoMessage *msg)
 {
 	g_print ("From: %s\n", msg->from != NULL ? msg->from : "");
 	if (msg->to != NULL && *msg->to != '\0')
@@ -208,10 +179,9 @@ print_read_message (ReadMessage *msg)
 	if (msg->attachments != NULL && msg->attachments->len > 0) {
 		g_print ("Attachments:\n");
 		for (guint i = 0; i < msg->attachments->len; i++) {
-			Attachment *attachment = g_ptr_array_index (msg->attachments, i);
+			EvoAttachment *att = g_ptr_array_index (msg->attachments, i);
 			g_print ("  - %s (%s, %" G_GSIZE_FORMAT " bytes)\n",
-				 attachment->filename, attachment->content_type,
-				 attachment->size);
+				 att->filename, att->content_type, att->size);
 		}
 	}
 
@@ -232,7 +202,7 @@ print_read_message (ReadMessage *msg)
 }
 
 void
-print_read_json (ReadMessage *msg)
+print_read_json (EvoMessage *msg)
 {
 	GString *out = g_string_new ("{\n");
 
@@ -264,18 +234,17 @@ print_read_json (ReadMessage *msg)
 
 	if (msg->attachments != NULL) {
 		for (guint i = 0; i < msg->attachments->len; i++) {
-			Attachment *attachment = g_ptr_array_index (msg->attachments, i);
-			gchar *filename = default_filename (attachment->filename,
-							    i + 1);
+			EvoAttachment *att = g_ptr_array_index (msg->attachments, i);
+			gchar *filename = default_filename (att->filename, i + 1);
 
 			if (i > 0)
 				g_string_append_c (out, ',');
 			g_string_append (out, "\n    {\"filename\":");
 			json_string (out, filename);
 			g_string_append (out, ",\"content_type\":");
-			json_string (out, attachment->content_type);
+			json_string (out, att->content_type);
 			g_string_append_printf (out, ",\"size\":%" G_GSIZE_FORMAT,
-						attachment->size);
+						att->size);
 			g_string_append_c (out, '}');
 			g_free (filename);
 		}

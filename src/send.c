@@ -1,5 +1,11 @@
 #include "evomail.h"
+#include "evoapp.h"
+
+#include <camel/camel.h>
+#include <libedataserver/libedataserver.h>
 #include <string.h>
+
+extern void json_string (GString *out, const gchar *value);
 
 static CamelInternetAddress *
 parse_address (const gchar *raw, const gchar *kind, GError **error)
@@ -10,7 +16,7 @@ parse_address (const gchar *raw, const gchar *kind, GError **error)
 		if (camel_address_decode (CAMEL_ADDRESS (address), raw) < 0 ||
 		    camel_address_length (CAMEL_ADDRESS (address)) == 0) {
 			g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-				     "Invalid %s address: “%s”", kind, raw);
+				     "Invalid %s address: %s", kind, raw);
 			g_object_unref (address);
 			return NULL;
 		}
@@ -70,7 +76,7 @@ make_attachment_part (const gchar *path, GError **error)
 }
 
 static CamelMimeMessage *
-build_message (Account *account, const gchar *to, const gchar *cc,
+build_message (EvoAccount *account, const gchar *to, const gchar *cc,
 	       const gchar *bcc, const gchar *subject, const gchar *body,
 	       gboolean html, GPtrArray *attach_paths, GError **error)
 {
@@ -217,16 +223,16 @@ build_message (Account *account, const gchar *to, const gchar *cc,
 }
 
 static gboolean
-save_to_sent (App *app, Account *account, CamelMimeMessage *message,
+save_to_sent (EvoApp *app, EvoAccount *account, CamelMimeMessage *message,
 	      GError **error)
 {
-	CamelStore *store;
-	CamelFolder *sent;
+	EvoStore *store;
+	EvoFolder *sent;
 	gchar *sent_name;
 	gchar *appended_uid = NULL;
 	gboolean success;
 
-	store = evo_open_store (app, account, error);
+	store = evo_store_open (app, account, error);
 	if (store == NULL)
 		return FALSE;
 
@@ -234,26 +240,29 @@ save_to_sent (App *app, Account *account, CamelMimeMessage *message,
 	if (sent_name == NULL)
 		sent_name = g_strdup ("Sent");
 
-	sent = camel_store_get_folder_sync (store, sent_name, 0, NULL, error);
+	sent = evo_folder_open (store, sent_name, error);
 	g_free (sent_name);
 	if (sent == NULL) {
-		g_object_unref (store);
+		evo_store_close (store);
 		return FALSE;
 	}
 
-	success = camel_folder_append_message_sync (sent, message, NULL,
-						    &appended_uid, NULL, error);
+	success = camel_folder_append_message_sync (
+		evo_folder_get_camel_folder (sent), message, NULL,
+		&appended_uid, NULL, error);
 	if (success)
-		camel_folder_synchronize_sync (sent, FALSE, NULL, NULL);
+		camel_folder_synchronize_sync (
+			evo_folder_get_camel_folder (sent),
+			FALSE, NULL, NULL);
 
 	g_free (appended_uid);
-	g_object_unref (sent);
-	g_object_unref (store);
+	evo_folder_close (sent);
+	evo_store_close (store);
 	return success;
 }
 
 gboolean
-evo_send (App *app, Account *account, const gchar *to, const gchar *cc,
+evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 	  const gchar *bcc, const gchar *subject, const gchar *body,
 	  gboolean html, GPtrArray *attach_paths, gboolean dry_run,
 	  gboolean save_copy, gboolean json, GError **error)
@@ -322,7 +331,26 @@ evo_send (App *app, Account *account, const gchar *to, const gchar *cc,
 		return TRUE;
 	}
 
-	if (!evo_open_transport (app, account, &transport, error)) {
+	CamelStore *cs = evo_store_get_camel_store (
+		evo_store_open (app, account, error));
+	if (cs == NULL) {
+		g_object_unref (message);
+		return FALSE;
+	}
+
+	transport = CAMEL_TRANSPORT (camel_session_add_service (
+		evo_app_get_session (app),
+		account->smtp_uid,
+		account->backend,
+		CAMEL_PROVIDER_TRANSPORT,
+		error));
+	if (transport == NULL) {
+		g_object_unref (message);
+		return FALSE;
+	}
+
+	if (!camel_service_connect_sync (CAMEL_SERVICE (transport), NULL, error)) {
+		g_object_unref (transport);
 		g_object_unref (message);
 		return FALSE;
 	}

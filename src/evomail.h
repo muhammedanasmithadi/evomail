@@ -2,9 +2,20 @@
 #define EVOMAIL_H
 
 #include <camel/camel.h>
-#include <libedataserver/libedataserver.h>
+#include <glib.h>
 
-typedef struct {
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Opaque types */
+typedef struct _EvoApp EvoApp;
+typedef struct _EvoAccount EvoAccount;
+typedef struct _EvoStore EvoStore;
+typedef struct _EvoFolder EvoFolder;
+
+/* Data-carrying types */
+struct _EvoAccount {
 	gchar *uid;
 	gchar *name;
 	gchar *email;
@@ -14,36 +25,10 @@ typedef struct {
 	gboolean local;
 	gchar *parent_uid;
 	gchar *smtp_uid;
-} Account;
+};
+typedef struct _EvoAccount EvoAccount;
 
-typedef struct {
-	ESourceRegistry *registry;
-	CamelSession *session;
-	GPtrArray *accounts; /* Account* */
-} App;
-
-typedef struct {
-	gchar *uid;
-	gchar *from;
-	gchar *subject;
-	gint64 date;
-	guint32 flags;
-} MsgSummary;
-
-typedef struct {
-	gchar *filename;
-	gchar *content_type;
-	gsize size;
-} Attachment;
-
-typedef struct {
-	gchar *text;
-	gchar *html;
-	gchar *charset;
-	GPtrArray *attachments; /* Attachment* */
-} MessageBody;
-
-typedef struct {
+struct _EvoMessage {
 	gchar *uid;
 	gchar *subject;
 	gchar *from;
@@ -55,50 +40,91 @@ typedef struct {
 	gchar *text;
 	gchar *html;
 	GPtrArray *attachments;
-} ReadMessage;
+};
+typedef struct _EvoMessage EvoMessage;
 
-/* session.c */
-CamelSession *evo_session_new (ESourceRegistry *registry);
-CamelStore *evo_open_store (App *app, Account *account, GError **error);
+struct _EvoAttachment {
+	gchar *filename;
+	gchar *content_type;
+	gsize size;
+};
+typedef struct _EvoAttachment EvoAttachment;
 
-/* accounts.c */
-gboolean evo_load_accounts (App *app, GError **error);
-Account *evo_find_account (App *app, const gchar *selector, GError **error);
-gboolean evo_open_transport (App *app, Account *account,
-			    CamelTransport **out_transport, GError **error);
+/* Message flags (evomail-native, not Camel bitmasks) */
+typedef enum {
+	EVO_MESSAGE_FLAG_SEEN = 1 << 0,
+	EVO_MESSAGE_FLAG_FLAGGED = 1 << 1,
+	EVO_MESSAGE_FLAG_DELETED = 1 << 2,
+} EvoMessageFlag;
 
-/* mail.c */
-CamelFolder *evo_open_folder (CamelStore *store, const gchar *name,
-			      gboolean writable, GError **error);
-gchar *evo_find_special_folder (CamelStore *store, guint32 type, GError **error);
-GPtrArray *evo_list_messages (CamelFolder *folder, gboolean refresh,
-			      GError **error);
-GPtrArray *evo_search_messages (CamelFolder *folder, const gchar *query,
-				gboolean refresh, GError **error);
-ReadMessage *evo_read_message (CamelFolder *folder, const gchar *uid,
-			       const gchar *save_attachments, GError **error);
-gboolean evo_mark_messages (CamelFolder *folder, gchar **uids,
-			    guint n_uids, guint32 mask, guint32 set,
-			    GError **error);
-void msg_summary_free (MsgSummary *msg);
-void read_message_free (ReadMessage *msg);
-void message_body_free (MessageBody *body);
-void attachment_free (Attachment *attachment);
+typedef enum {
+	EVO_FLAG_OP_SET,
+	EVO_FLAG_OP_CLEAR,
+	EVO_FLAG_OP_TOGGLE,
+} EvoFlagOp;
 
-/* output.c */
-void json_string (GString *out, const gchar *value);
+/* App lifecycle */
+EvoApp *evo_app_new (GError **error);
+void     evo_app_free (EvoApp *app);
+GPtrArray *evo_app_get_accounts (EvoApp *app);
+EvoAccount *evo_app_find_account (EvoApp *app, const gchar *selector, GError **error);
+
+/* Account properties */
+const gchar *evo_account_get_uid (EvoAccount *account);
+const gchar *evo_account_get_name (EvoAccount *account);
+const gchar *evo_account_get_email (EvoAccount *account);
+const gchar *evo_account_get_backend (EvoAccount *account);
+const gchar *evo_account_get_host (EvoAccount *account);
+gint evo_account_get_port (EvoAccount *account);
+gboolean evo_account_is_local (EvoAccount *account);
+const gchar *evo_account_get_smtp_uid (EvoAccount *account);
+
+/* Store and folder */
+EvoStore *evo_store_open (EvoApp *app, EvoAccount *account, GError **error);
+void evo_store_close (EvoStore *store);
+EvoFolder *evo_folder_open (EvoStore *store, const gchar *name, GError **error);
+void evo_folder_close (EvoFolder *folder);
+gchar *evo_find_special_folder (EvoStore *store, guint32 type, GError **error);
+GPtrArray *evo_folder_list_messages (EvoFolder *folder, gboolean refresh, GError **error);
+GPtrArray *evo_folder_search_messages (EvoFolder *folder, const gchar *query, gboolean refresh, GError **error);
+EvoMessage *evo_folder_read_message (EvoFolder *folder, const gchar *uid, const gchar *save_dir, GError **error);
+gboolean evo_folder_mark_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoMessageFlag mask, EvoFlagOp op, GError **error);
+
+/* Message getters */
+const gchar *evo_message_get_uid (EvoMessage *msg);
+const gchar *evo_message_get_subject (EvoMessage *msg);
+const gchar *evo_message_get_from (EvoMessage *msg);
+const gchar *evo_message_get_to (EvoMessage *msg);
+const gchar *evo_message_get_cc (EvoMessage *msg);
+const gchar *evo_message_get_date (EvoMessage *msg);
+const gchar *evo_message_get_message_id (EvoMessage *msg);
+guint32 evo_message_get_flags (EvoMessage *msg);
+const gchar *evo_message_get_text (EvoMessage *msg);
+const gchar *evo_message_get_html (EvoMessage *msg);
+GPtrArray *evo_message_get_attachments (EvoMessage *msg);
+
+/* Utility */
 gchar *format_date (gint64 date);
-gchar *format_flags (guint32 flags);
-void print_message_table (GPtrArray *messages);
-void print_message_json (GPtrArray *messages);
-void print_read_message (ReadMessage *msg);
-void print_read_json (ReadMessage *msg);
 
-/* send.c */
-gboolean evo_send (App *app, Account *account,
+/* Attachment getters */
+const gchar *evo_attachment_get_filename (EvoAttachment *att);
+const gchar *evo_attachment_get_content_type (EvoAttachment *att);
+gsize evo_attachment_get_size (EvoAttachment *att);
+
+/* Freeing */
+void evo_message_free (EvoMessage *msg);
+void evo_attachment_free (EvoAttachment *att);
+
+/* Send */
+gboolean evo_send (EvoApp *app, EvoAccount *account,
 		   const gchar *to, const gchar *cc, const gchar *bcc,
-		   const gchar *subject, const gchar *body, gboolean html,
-		   GPtrArray *attach_paths, gboolean dry_run, gboolean save_copy,
-		   gboolean json, GError **error);
+		   const gchar *subject, const gchar *body,
+		   gboolean html, GPtrArray *attach_paths,
+		   gboolean dry_run, gboolean save_copy, gboolean json,
+		   GError **error);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EVOMAIL_H */

@@ -1,6 +1,15 @@
 #include "evomail.h"
+#include "evoapp.h"
+
+#include <camel/camel.h>
 #include <string.h>
 #include <unistd.h>
+
+extern void json_string (GString *out, const gchar *value);
+extern void print_message_table (GPtrArray *messages);
+extern void print_message_json (GPtrArray *messages);
+extern void print_read_message (EvoMessage *msg);
+extern void print_read_json (EvoMessage *msg);
 
 static gchar *opt_account = NULL;
 static gchar *opt_folder = NULL;
@@ -26,7 +35,6 @@ static gchar *opt_body_file = NULL;
 static gchar **opt_attach = NULL;
 static gboolean opt_dry_run = FALSE;
 static gboolean opt_save_copy = TRUE;
-
 static gboolean opt_version = FALSE;
 
 static const GOptionEntry entries[] = {
@@ -84,151 +92,84 @@ static const GOptionEntry entries[] = {
 };
 
 static void
-app_clear (App *app)
-{
-	if (app->accounts != NULL)
-		g_ptr_array_unref (app->accounts);
-	if (app->session != NULL)
-		g_object_unref (app->session);
-	if (app->registry != NULL)
-		g_object_unref (app->registry);
-	memset (app, 0, sizeof (*app));
-}
-
-static gboolean
-app_init (App *app, GError **error)
-{
-	memset (app, 0, sizeof (*app));
-
-	app->registry = e_source_registry_new_sync (NULL, error);
-	if (app->registry == NULL)
-		return FALSE;
-
-	app->session = evo_session_new (app->registry);
-	return evo_load_accounts (app, error);
-}
-
-static void
-print_accounts (App *app)
-{
-	if (opt_json) {
-		GString *out = g_string_new ("[\n");
-
-		for (guint i = 0; i < app->accounts->len; i++) {
-			Account *account = g_ptr_array_index (app->accounts, i);
-
-			g_string_append (out, "  {\"uid\":");
-			json_string (out, account->uid);
-			g_string_append (out, ",\"name\":");
-			json_string (out, account->name);
-			g_string_append (out, ",\"email\":");
-			json_string (out, account->email);
-			g_string_append (out, ",\"backend\":");
-			json_string (out, account->backend);
-			g_string_append (out, ",\"host\":");
-			json_string (out, account->host);
-			g_string_append_printf (out, ",\"port\":%d", account->port);
-			g_string_append_printf (out, ",\"local\":%s",
-						account->local ? "true" : "false");
-			g_string_append (out, ",\"smtp_uid\":");
-			json_string (out, account->smtp_uid);
-			g_string_append_c (out, '}');
-			if (i + 1 < app->accounts->len)
-				g_string_append_c (out, ',');
-			g_string_append_c (out, '\n');
-		}
-
-		g_string_append (out, "]\n");
-		g_print ("%s", out->str);
-		g_string_free (out, TRUE);
-		return;
-	}
-
-	if (app->accounts->len == 0) {
-		g_print ("No Evolution mail accounts found.\n");
-		return;
-	}
-
-	for (guint i = 0; i < app->accounts->len; i++) {
-		Account *account = g_ptr_array_index (app->accounts, i);
-
-		g_print ("* %s", account->email != NULL ?
-			 account->email : account->uid);
-		if (account->name != NULL &&
-		    g_strcmp0 (account->name, account->email) != 0)
-			g_print (" (%s)", account->name);
-		g_print ("\n");
-		g_print ("  store: %s", account->backend);
-		if (account->host != NULL && *account->host != '\0')
-			g_print (" %s:%d", account->host, account->port);
-		g_print (" [%s]\n", account->uid);
-		if (account->smtp_uid != NULL)
-			g_print ("  transport: smtp [%s]\n", account->smtp_uid);
-		else if (!account->local)
-			g_print ("  transport: none configured\n");
-	}
-}
-
-static void
-print_folder_tree (CamelFolderInfo *info, guint depth, gboolean *first)
+print_folder_tree_text (CamelFolderInfo *info, guint depth)
 {
 	for (CamelFolderInfo *i = info; i != NULL; i = i->next) {
-		if (opt_json) {
-			GString *out = g_string_new (NULL);
-
-			if (!*first)
-				g_print (",\n");
-			*first = FALSE;
-			json_string (out, i->full_name);
-			g_print ("  {\"name\":%s}", out->str);
-			g_string_free (out, TRUE);
-		} else {
-			g_print ("%*s%s", depth * 2, "", i->full_name);
-			if (i->total >= 0)
-				g_print ("  (%d messages, %d unread)",
-					 i->total, i->unread);
-			g_print ("\n");
-		}
+		g_print ("%*s%s", depth * 2, "", i->full_name);
+		if (i->total >= 0)
+			g_print ("  (%d messages, %d unread)",
+				 i->total, i->unread);
+		g_print ("\n");
 
 		if (i->child != NULL)
-			print_folder_tree (i->child, depth + 1, first);
+			print_folder_tree_text (i->child, depth + 1);
+	}
+}
+
+static void
+print_folder_tree_json (CamelFolderInfo *info, GString *out, gboolean *first)
+{
+	for (CamelFolderInfo *i = info; i != NULL; i = i->next) {
+		if (!*first)
+			g_string_append_c (out, ',');
+		*first = FALSE;
+		g_string_append_c (out, '\n');
+		g_string_append (out, "  {\"name\":");
+		json_string (out, i->full_name);
+		g_string_append_c (out, '}');
+		if (i->child != NULL)
+			print_folder_tree_json (i->child, out, first);
 	}
 }
 
 static gboolean
-cmd_folders (App *app, GError **error)
+cmd_folders (EvoApp *app, GError **error)
 {
-	Account *account = evo_find_account (app, opt_account, error);
-	CamelStore *store;
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
 	CamelFolderInfo *info;
 	gboolean first = TRUE;
 
 	if (account == NULL)
 		return FALSE;
 
-	store = evo_open_store (app, account, error);
+	store = evo_store_open (app, account, error);
 	if (store == NULL)
 		return FALSE;
 
 	info = camel_store_get_folder_info_sync (
-		store, NULL,
+		evo_store_get_camel_store (store),
+		NULL,
 		CAMEL_STORE_FOLDER_INFO_RECURSIVE | CAMEL_STORE_FOLDER_INFO_REFRESH,
 		NULL, error);
 	if (info == NULL) {
-		g_object_unref (store);
+		evo_store_close (store);
 		return FALSE;
 	}
 
 	if (opt_json) {
-		g_print ("[\n");
-		print_folder_tree (info, 0, &first);
-		g_print ("\n]\n");
+		GString *out = g_string_new ("[\n");
+		for (CamelFolderInfo *i = info; i != NULL; i = i->next) {
+			if (!first)
+				g_string_append_c (out, ',');
+			first = FALSE;
+			g_string_append_c (out, '\n');
+			g_string_append (out, "  {\"name\":");
+			json_string (out, i->full_name);
+			g_string_append_c (out, '}');
+			if (i->child != NULL)
+				print_folder_tree_json (i->child, out, &first);
+		}
+		g_string_append_c (out, '\n');
+		g_string_append_c (out, ']');
+		g_print ("%s", out->str);
+		g_string_free (out, TRUE);
 	} else {
-		print_folder_tree (info, 0, &first);
+		print_folder_tree_text (info, 0);
 	}
 
 	camel_folder_info_free (info);
-	g_object_unref (store);
+	evo_store_close (store);
 	return TRUE;
 }
 
@@ -236,7 +177,7 @@ static void
 filter_unread (GPtrArray *messages)
 {
 	for (guint i = messages->len; i > 0; i--) {
-		MsgSummary *msg = g_ptr_array_index (messages, i - 1);
+		EvoMessage *msg = g_ptr_array_index (messages, i - 1);
 
 		if (msg->flags & CAMEL_MESSAGE_SEEN)
 			g_ptr_array_remove_index (messages, i - 1);
@@ -252,39 +193,39 @@ apply_limit (GPtrArray *messages)
 }
 
 static gboolean
-cmd_list (App *app, gboolean search, gchar **terms, GError **error)
+cmd_list (EvoApp *app, gboolean search, gchar **terms, GError **error)
 {
-	Account *account = evo_find_account (app, opt_account, error);
-	CamelStore *store;
-	CamelFolder *folder;
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
 	GPtrArray *messages;
 	gchar *query = NULL;
 
 	if (account == NULL)
 		return FALSE;
 
-	store = evo_open_store (app, account, error);
+	store = evo_store_open (app, account, error);
 	if (store == NULL)
 		return FALSE;
 
-	folder = evo_open_folder (store, opt_folder, FALSE, error);
+	folder = evo_folder_open (store, opt_folder, error);
 	if (folder == NULL) {
-		g_object_unref (store);
+		evo_store_close (store);
 		return FALSE;
 	}
 
 	if (search) {
 		query = g_strjoinv (" ", terms);
-		messages = evo_search_messages (folder, query ? query : "",
-						opt_refresh, error);
+		messages = evo_folder_search_messages (folder, query ? query : "",
+						       opt_refresh, error);
 		g_free (query);
 	} else {
-		messages = evo_list_messages (folder, opt_refresh, error);
+		messages = evo_folder_list_messages (folder, opt_refresh, error);
 	}
 
 	if (messages == NULL) {
-		g_object_unref (folder);
-		g_object_unref (store);
+		evo_folder_close (folder);
+		evo_store_close (store);
 		return FALSE;
 	}
 
@@ -298,43 +239,37 @@ cmd_list (App *app, gboolean search, gchar **terms, GError **error)
 		print_message_table (messages);
 
 	g_ptr_array_unref (messages);
-	g_object_unref (folder);
-	g_object_unref (store);
+	evo_folder_close (folder);
+	evo_store_close (store);
 	return TRUE;
 }
 
 static gboolean
-cmd_read (App *app, gchar *uid, GError **error)
+cmd_read (EvoApp *app, gchar *uid, GError **error)
 {
-	Account *account = evo_find_account (app, opt_account, error);
-	CamelStore *store;
-	CamelFolder *folder;
-	ReadMessage *message;
-	GError *local_error = NULL;
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
+	EvoMessage *message;
 
 	if (account == NULL)
 		return FALSE;
 
-	store = evo_open_store (app, account, error);
+	store = evo_store_open (app, account, error);
 	if (store == NULL)
 		return FALSE;
 
-	folder = evo_open_folder (store, opt_folder, FALSE, error);
+	folder = evo_folder_open (store, opt_folder, error);
 	if (folder == NULL) {
-		g_object_unref (store);
+		evo_store_close (store);
 		return FALSE;
 	}
 
-	if (!camel_folder_refresh_info_sync (folder, NULL, &local_error)) {
-		g_printerr ("evomail: warning: folder refresh failed: %s\n",
-			    local_error->message);
-		g_clear_error (&local_error);
-	}
-
-	message = evo_read_message (folder, uid, opt_save_attachments, error);
+	message = evo_folder_read_message (folder, uid, opt_save_attachments,
+					   error);
 	if (message == NULL) {
-		g_object_unref (folder);
-		g_object_unref (store);
+		evo_folder_close (folder);
+		evo_store_close (store);
 		return FALSE;
 	}
 
@@ -349,30 +284,29 @@ cmd_read (App *app, gchar *uid, GError **error)
 		print_read_message (message);
 
 	if (opt_mark_seen) {
-		gchar *mark_uids[] = { uid };
-		if (!evo_mark_messages (folder, mark_uids, 1,
-				     CAMEL_MESSAGE_SEEN, CAMEL_MESSAGE_SEEN,
-				     NULL)) {
+		const gchar * const mark_uids[] = { uid };
+		if (!evo_folder_mark_messages (folder, mark_uids, 1,
+					       EVO_MESSAGE_FLAG_SEEN,
+					       EVO_FLAG_OP_SET, NULL)) {
 			g_printerr ("evomail: could not mark message as seen\n");
 		}
 	}
 
-	read_message_free (message);
-	g_object_unref (folder);
-	g_object_unref (store);
+	evo_message_free (message);
+	evo_folder_close (folder);
+	evo_store_close (store);
 	return TRUE;
 }
 
 static gboolean
-cmd_mark (App *app, gchar **uids, gint n_uids, GError **error)
+cmd_mark (EvoApp *app, gchar **uids, gint n_uids, GError **error)
 {
-	Account *account = evo_find_account (app, opt_account, error);
-	CamelStore *store;
-	CamelFolder *folder;
-	guint32 mask = 0;
-	guint32 set = 0;
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
+	EvoMessageFlag mask = 0;
+	EvoFlagOp op = EVO_FLAG_OP_SET;
 	gboolean success;
-	GError *local_error = NULL;
 
 	if (account == NULL)
 		return FALSE;
@@ -384,28 +318,28 @@ cmd_mark (App *app, gchar **uids, gint n_uids, GError **error)
 	}
 
 	if (opt_mark_read) {
-		mask |= CAMEL_MESSAGE_SEEN;
-		set |= CAMEL_MESSAGE_SEEN;
+		mask |= EVO_MESSAGE_FLAG_SEEN;
+		op = EVO_FLAG_OP_SET;
 	}
 	if (opt_unread) {
-		mask |= CAMEL_MESSAGE_SEEN;
-		set &= ~CAMEL_MESSAGE_SEEN;
+		mask |= EVO_MESSAGE_FLAG_SEEN;
+		op = EVO_FLAG_OP_CLEAR;
 	}
 	if (opt_flag) {
-		mask |= CAMEL_MESSAGE_FLAGGED;
-		set |= CAMEL_MESSAGE_FLAGGED;
+		mask |= EVO_MESSAGE_FLAG_FLAGGED;
+		op = EVO_FLAG_OP_SET;
 	}
 	if (opt_unflag) {
-		mask |= CAMEL_MESSAGE_FLAGGED;
-		set &= ~CAMEL_MESSAGE_FLAGGED;
+		mask |= EVO_MESSAGE_FLAG_FLAGGED;
+		op = EVO_FLAG_OP_CLEAR;
 	}
 	if (opt_delete) {
-		mask |= CAMEL_MESSAGE_DELETED;
-		set |= CAMEL_MESSAGE_DELETED;
+		mask |= EVO_MESSAGE_FLAG_DELETED;
+		op = EVO_FLAG_OP_SET;
 	}
 	if (opt_undelete) {
-		mask |= CAMEL_MESSAGE_DELETED;
-		set &= ~CAMEL_MESSAGE_DELETED;
+		mask |= EVO_MESSAGE_FLAG_DELETED;
+		op = EVO_FLAG_OP_CLEAR;
 	}
 
 	if (mask == 0) {
@@ -415,37 +349,22 @@ cmd_mark (App *app, gchar **uids, gint n_uids, GError **error)
 		return FALSE;
 	}
 
-	store = evo_open_store (app, account, error);
+	store = evo_store_open (app, account, error);
 	if (store == NULL)
 		return FALSE;
 
-	folder = evo_open_folder (store, opt_folder, TRUE, error);
+	folder = evo_folder_open (store, opt_folder, error);
 	if (folder == NULL) {
-		g_object_unref (store);
+		evo_store_close (store);
 		return FALSE;
 	}
 
-	/* Ensure the folder is connected and synced with the server
-	 * before making flag changes. */
-	if (!camel_folder_refresh_info_sync (folder, NULL, &local_error)) {
-		g_printerr ("evomail: warning: folder refresh failed: %s\n",
-			    local_error->message);
-		g_clear_error (&local_error);
+	success = evo_folder_mark_messages (folder, (const gchar * const *) uids,
+					    n_uids, mask, op, error);
+	if (success && opt_expunge) {
+		CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
+		success = camel_folder_expunge_sync (cfolder, NULL, error);
 	}
-
-	if (!camel_offline_store_get_online (CAMEL_OFFLINE_STORE (store))) {
-		if (!camel_offline_store_set_online_sync (
-			CAMEL_OFFLINE_STORE (store), TRUE,
-			NULL, error)) {
-			g_object_unref (folder);
-			g_object_unref (store);
-			return FALSE;
-		}
-	}
-
-	success = evo_mark_messages (folder, uids, n_uids, mask, set, error);
-	if (success && opt_expunge)
-		success = camel_folder_expunge_sync (folder, NULL, error);
 
 	if (success) {
 		if (opt_json)
@@ -455,15 +374,15 @@ cmd_mark (App *app, gchar **uids, gint n_uids, GError **error)
 				 n_uids == 1 ? "" : "s");
 	}
 
-	g_object_unref (folder);
-	g_object_unref (store);
+	evo_folder_close (folder);
+	evo_store_close (store);
 	return success;
 }
 
 static gboolean
-cmd_send (App *app, GError **error)
+cmd_send (EvoApp *app, GError **error)
 {
-	Account *account = evo_find_account (app, opt_account, error);
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
 	GPtrArray *attach_paths = NULL;
 	gchar *body = NULL;
 	gboolean success;
@@ -534,7 +453,7 @@ main (int argc, char **argv)
 {
 	GOptionContext *context;
 	GError *error = NULL;
-	App app;
+	EvoApp *app;
 	const gchar *command;
 	gint result = 0;
 
@@ -587,7 +506,15 @@ main (int argc, char **argv)
 
 	command = argv[1];
 
-	if (!app_init (&app, &error)) {
+	app = evo_app_new (&error);
+	if (app == NULL) {
+		g_printerr ("evomail: %s\n", error->message);
+		g_clear_error (&error);
+		result = 1;
+		goto cleanup;
+	}
+
+	if (!evo_load_accounts (app, &error)) {
 		g_printerr ("evomail: %s\n", error->message);
 		g_clear_error (&error);
 		result = 1;
@@ -597,12 +524,69 @@ main (int argc, char **argv)
 	if (g_strcmp0 (command, "version") == 0) {
 		g_print ("evomail 0.1.0\n");
 	} else if (g_strcmp0 (command, "accounts") == 0) {
-		print_accounts (&app);
+		GPtrArray *accounts = evo_app_get_accounts (app);
+
+		if (opt_json) {
+			GString *out = g_string_new ("[\n");
+			for (guint i = 0; i < accounts->len; i++) {
+				EvoAccount *acct = g_ptr_array_index (accounts, i);
+				g_string_append (out, "  {\"uid\":");
+				json_string (out, evo_account_get_uid (acct));
+				g_string_append (out, ",\"name\":");
+				json_string (out, evo_account_get_name (acct));
+				g_string_append (out, ",\"email\":");
+				json_string (out, evo_account_get_email (acct));
+				g_string_append (out, ",\"backend\":");
+				json_string (out, evo_account_get_backend (acct));
+				g_string_append (out, ",\"host\":");
+				json_string (out, evo_account_get_host (acct));
+				g_string_append_printf (out, ",\"port\":%d",
+							evo_account_get_port (acct));
+				g_string_append_printf (out, ",\"local\":%s",
+							evo_account_is_local (acct) ?
+							"true" : "false");
+				g_string_append (out, ",\"smtp_uid\":");
+				json_string (out, evo_account_get_smtp_uid (acct));
+				g_string_append_c (out, '}');
+				if (i + 1 < accounts->len)
+					g_string_append_c (out, ',');
+				g_string_append_c (out, '\n');
+			}
+			g_string_append (out, "]\n");
+			g_print ("%s", out->str);
+			g_string_free (out, TRUE);
+		} else {
+			for (guint i = 0; i < accounts->len; i++) {
+				EvoAccount *acct = g_ptr_array_index (accounts, i);
+				g_print ("* %s",
+					 evo_account_get_email (acct) != NULL ?
+					 evo_account_get_email (acct) :
+					 evo_account_get_uid (acct));
+				if (evo_account_get_name (acct) != NULL &&
+				    g_strcmp0 (evo_account_get_name (acct),
+					       evo_account_get_email (acct)) != 0)
+					g_print (" (%s)", evo_account_get_name (acct));
+				g_print ("\n");
+				g_print ("  store: %s",
+					 evo_account_get_backend (acct));
+				if (evo_account_get_host (acct) != NULL &&
+				    *evo_account_get_host (acct) != '\0')
+					g_print (" %s:%d",
+						 evo_account_get_host (acct),
+						 evo_account_get_port (acct));
+				g_print (" [%s]\n", evo_account_get_uid (acct));
+				if (evo_account_get_smtp_uid (acct) != NULL)
+					g_print ("  transport: smtp [%s]\n",
+						 evo_account_get_smtp_uid (acct));
+				else if (!evo_account_is_local (acct))
+					g_print ("  transport: none configured\n");
+			}
+		}
 	} else if (g_strcmp0 (command, "folders") == 0) {
-		if (!cmd_folders (&app, &error))
+		if (!cmd_folders (app, &error))
 			result = 1;
 	} else if (g_strcmp0 (command, "list") == 0) {
-		if (!cmd_list (&app, FALSE, NULL, &error))
+		if (!cmd_list (app, FALSE, NULL, &error))
 			result = 1;
 	} else if (g_strcmp0 (command, "search") == 0) {
 		if (argc < 3) {
@@ -610,7 +594,7 @@ main (int argc, char **argv)
 					     G_IO_ERROR_INVALID_ARGUMENT,
 					     "Search needs a query.");
 			result = 1;
-		} else if (!cmd_list (&app, TRUE, &argv[2], &error)) {
+		} else if (!cmd_list (app, TRUE, &argv[2], &error)) {
 			result = 1;
 		}
 	} else if (g_strcmp0 (command, "read") == 0) {
@@ -619,14 +603,14 @@ main (int argc, char **argv)
 					     G_IO_ERROR_INVALID_ARGUMENT,
 					     "Read needs a message UID.");
 			result = 1;
-		} else if (!cmd_read (&app, argv[2], &error)) {
+		} else if (!cmd_read (app, argv[2], &error)) {
 			result = 1;
 		}
 	} else if (g_strcmp0 (command, "mark") == 0) {
-		if (!cmd_mark (&app, &argv[2], argc - 2, &error))
+		if (!cmd_mark (app, &argv[2], argc - 2, &error))
 			result = 1;
 	} else if (g_strcmp0 (command, "send") == 0) {
-		if (!cmd_send (&app, &error))
+		if (!cmd_send (app, &error))
 			result = 1;
 	} else {
 		g_printerr ("evomail: unknown command “%s”. Run with --help.\n",
@@ -639,7 +623,7 @@ main (int argc, char **argv)
 		g_clear_error (&error);
 	}
 
-	app_clear (&app);
+	evo_app_free (app);
 
 cleanup:
 	g_option_context_free (context);

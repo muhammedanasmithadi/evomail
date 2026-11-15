@@ -1,5 +1,27 @@
 #include "evomail.h"
+#include "evoapp.h"
+
+#include <camel/camel.h>
+#include <libedataserver/libedataserver.h>
 #include <string.h>
+
+extern gchar *format_date (gint64 date);
+
+/* ========================================================================
+ * Internal types
+ * ======================================================================== */
+
+struct _EvoFolder {
+	CamelFolder *folder;
+};
+
+/* EvoMessage and EvoAttachment are defined in evomail.h (public API).
+ * EvoAccount is defined below (internal).
+ */
+
+/* ========================================================================
+ * Folder info tree traversal
+ * ======================================================================== */
 
 static gchar *
 folder_info_find_name (CamelFolderInfo *info, const gchar *name)
@@ -40,8 +62,6 @@ folder_info_find_name_or_type (CamelFolderInfo *info, const gchar *alias,
                                guint32 type)
 {
 	for (CamelFolderInfo *i = info; i != NULL; i = i->next) {
-		/* Try name-based match: alias is a prefix of the last path
-		 * component, e.g. "sent" matches "[Gmail]/Sent Mail". */
 		if (i->full_name != NULL) {
 			const gchar *suffix = strrchr (i->full_name, '/');
 			if (suffix != NULL)
@@ -56,7 +76,6 @@ folder_info_find_name_or_type (CamelFolderInfo *info, const gchar *alias,
 				return g_strdup (i->full_name);
 		}
 
-		/* Then try type-based match. */
 		if ((i->flags & CAMEL_FOLDER_TYPE_MASK) == type)
 			return g_strdup (i->full_name);
 
@@ -71,13 +90,14 @@ folder_info_find_name_or_type (CamelFolderInfo *info, const gchar *alias,
 }
 
 gchar *
-evo_find_special_folder (CamelStore *store, guint32 type, GError **error)
+evo_find_special_folder (EvoStore *store, guint32 type, GError **error)
 {
 	CamelFolderInfo *info;
 	gchar *name;
 
 	info = camel_store_get_folder_info_sync (
-		store, NULL, CAMEL_STORE_FOLDER_INFO_RECURSIVE, NULL, error);
+		evo_store_get_camel_store (store),
+		NULL, CAMEL_STORE_FOLDER_INFO_RECURSIVE, NULL, error);
 	if (info == NULL)
 		return NULL;
 
@@ -86,20 +106,21 @@ evo_find_special_folder (CamelStore *store, guint32 type, GError **error)
 	return name;
 }
 
-CamelFolder *
-evo_open_folder (CamelStore *store, const gchar *name,
-		 gboolean writable, GError **error)
+EvoFolder *
+evo_folder_open (EvoStore *store, const gchar *name, GError **error)
 {
+	CamelStore *cs = evo_store_get_camel_store (store);
 	CamelFolder *folder;
 	GError *local_error = NULL;
 
-	(void) writable;
-
 	if (name == NULL || *name == '\0' ||
 	    g_ascii_strcasecmp (name, "inbox") == 0) {
-		folder = camel_store_get_inbox_folder_sync (store, NULL, error);
-		if (folder != NULL)
-			return folder;
+		folder = camel_store_get_inbox_folder_sync (cs, NULL, error);
+		if (folder != NULL) {
+			EvoFolder *ef = g_new0 (EvoFolder, 1);
+			ef->folder = folder;
+			return ef;
+		}
 		if (name != NULL && *name != '\0')
 			return NULL;
 	}
@@ -120,13 +141,12 @@ evo_open_folder (CamelStore *store, const gchar *name,
 
 		for (guint i = 0; i < G_N_ELEMENTS (aliases); i++) {
 			if (g_ascii_strcasecmp (name, aliases[i].alias) == 0) {
-				/* First try type-based match, then name-based fallback. */
 				gchar *special = evo_find_special_folder (
 					store, aliases[i].type, &local_error);
 				if (special == NULL) {
 					CamelFolderInfo *info =
 						camel_store_get_folder_info_sync (
-							store, NULL,
+							cs, NULL,
 							CAMEL_STORE_FOLDER_INFO_RECURSIVE,
 							NULL, NULL);
 					if (info != NULL) {
@@ -138,10 +158,12 @@ evo_open_folder (CamelStore *store, const gchar *name,
 				}
 				if (special != NULL) {
 					folder = camel_store_get_folder_sync (
-						store, special, 0, NULL, error);
+						cs, special, 0, NULL, error);
 					g_free (special);
 					g_clear_error (&local_error);
-					return folder;
+					EvoFolder *ef = g_new0 (EvoFolder, 1);
+					ef->folder = folder;
+					return ef;
 				}
 				g_clear_error (&local_error);
 				break;
@@ -149,21 +171,24 @@ evo_open_folder (CamelStore *store, const gchar *name,
 		}
 	}
 
-	folder = camel_store_get_folder_sync (store, name, 0, NULL, NULL);
-	if (folder != NULL)
-		return folder;
+	folder = camel_store_get_folder_sync (cs, name, 0, NULL, NULL);
+	if (folder != NULL) {
+		EvoFolder *ef = g_new0 (EvoFolder, 1);
+		ef->folder = folder;
+		return ef;
+	}
 
 	{
 		CamelFolderInfo *info;
 		gchar *found;
 
 		info = camel_store_get_folder_info_sync (
-			store, NULL, CAMEL_STORE_FOLDER_INFO_RECURSIVE,
+			cs, NULL, CAMEL_STORE_FOLDER_INFO_RECURSIVE,
 			NULL, NULL);
 		if (info == NULL) {
 			g_set_error (error, CAMEL_STORE_ERROR,
 				     CAMEL_STORE_ERROR_NO_FOLDER,
-				     "Folder “%s” not found.", name);
+				     "Folder %s not found.", name);
 			return NULL;
 		}
 
@@ -172,68 +197,91 @@ evo_open_folder (CamelStore *store, const gchar *name,
 		if (found == NULL) {
 			g_set_error (error, CAMEL_STORE_ERROR,
 				     CAMEL_STORE_ERROR_NO_FOLDER,
-				     "Folder “%s” not found.", name);
+				     "Folder %s not found.", name);
 			return NULL;
 		}
 
-		folder = camel_store_get_folder_sync (store, found, 0, NULL, error);
+		folder = camel_store_get_folder_sync (cs, found, 0, NULL, error);
 		g_free (found);
-		return folder;
+		EvoFolder *ef = g_new0 (EvoFolder, 1);
+		ef->folder = folder;
+		return ef;
 	}
+}
+
+void
+evo_folder_close (EvoFolder *folder)
+{
+	if (folder == NULL)
+		return;
+	g_object_unref (folder->folder);
+	g_free (folder);
+}
+
+CamelFolder *
+evo_folder_get_camel_folder (EvoFolder *folder)
+{
+	return folder->folder;
 }
 
 static gint
 compare_messages (gconstpointer a, gconstpointer b)
 {
-	const MsgSummary *ma = *(MsgSummary * const *) a;
-	const MsgSummary *mb = *(MsgSummary * const *) b;
+	const EvoMessage *ma = *(EvoMessage * const *) a;
+	const EvoMessage *mb = *(EvoMessage * const *) b;
 
 	if (ma->date != mb->date)
 		return ma->date < mb->date ? 1 : -1;
 	return g_strcmp0 (mb->uid, ma->uid);
 }
 
-static GPtrArray *
-summaries_from_uids (CamelFolder *folder, GPtrArray *uids)
+static EvoMessage *
+message_from_info (CamelFolder *cfolder, const gchar *uid)
 {
-	GPtrArray *messages = g_ptr_array_new_with_free_func (
-		(GDestroyNotify) msg_summary_free);
+	CamelMessageInfo *info = camel_folder_get_message_info (cfolder, uid);
+	EvoMessage *msg;
 
-	for (guint i = 0; i < uids->len; i++) {
-		const gchar *uid = g_ptr_array_index (uids, i);
-		CamelMessageInfo *info = camel_folder_get_message_info (folder, uid);
-		MsgSummary *summary;
+	if (info == NULL)
+		return NULL;
 
-		if (info == NULL)
-			continue;
+	msg = g_new0 (EvoMessage, 1);
+	msg->uid = g_strdup (uid);
+	msg->from = g_strdup (camel_message_info_get_from (info));
+	msg->subject = g_strdup (camel_message_info_get_subject (info));
+	msg->date = format_date (camel_message_info_get_date_sent (info));
+	msg->flags = camel_message_info_get_flags (info);
+	g_object_unref (info);
 
-		summary = g_new0 (MsgSummary, 1);
-		summary->uid = g_strdup (uid);
-		summary->from = g_strdup (camel_message_info_get_from (info));
-		summary->subject = g_strdup (camel_message_info_get_subject (info));
-		summary->date = camel_message_info_get_date_sent (info);
-		summary->flags = camel_message_info_get_flags (info);
-		g_ptr_array_add (messages, summary);
-	}
-
-	g_ptr_array_sort (messages, compare_messages);
-	return messages;
+	return msg;
 }
 
 GPtrArray *
-evo_list_messages (CamelFolder *folder, gboolean refresh, GError **error)
+evo_folder_list_messages (EvoFolder *folder, gboolean refresh,
+                          GError **error)
 {
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
 	GPtrArray *uids = NULL;
 	GPtrArray *messages;
 
-	if (refresh && !camel_folder_refresh_info_sync (folder, NULL, error))
+	if (refresh && !camel_folder_refresh_info_sync (cfolder, NULL, error))
 		return NULL;
 
-	if (!camel_folder_search_sync (folder, "#t", &uids, NULL, error))
+	if (!camel_folder_search_sync (cfolder, "#t", &uids, NULL, error))
 		return NULL;
 
-	messages = summaries_from_uids (folder, uids);
+	messages = g_ptr_array_new_with_free_func (
+		(GDestroyNotify) evo_message_free);
+
+	for (guint i = 0; i < uids->len; i++) {
+		const gchar *uid = g_ptr_array_index (uids, i);
+		EvoMessage *msg = message_from_info (cfolder, uid);
+
+		if (msg != NULL)
+			g_ptr_array_add (messages, msg);
+	}
+
 	g_ptr_array_unref (uids);
+	g_ptr_array_sort (messages, compare_messages);
 	return messages;
 }
 
@@ -362,25 +410,37 @@ build_search_expression (const gchar *query)
 }
 
 GPtrArray *
-evo_search_messages (CamelFolder *folder, const gchar *query,
-		     gboolean refresh, GError **error)
+evo_folder_search_messages (EvoFolder *folder, const gchar *query,
+                            gboolean refresh, GError **error)
 {
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
 	GPtrArray *uids = NULL;
 	GPtrArray *messages;
 	gchar *expression;
 
-	if (refresh && !camel_folder_refresh_info_sync (folder, NULL, error))
+	if (refresh && !camel_folder_refresh_info_sync (cfolder, NULL, error))
 		return NULL;
 
 	expression = build_search_expression (query);
-	if (!camel_folder_search_sync (folder, expression, &uids, NULL, error)) {
+	if (!camel_folder_search_sync (cfolder, expression, &uids, NULL, error)) {
 		g_free (expression);
 		return NULL;
 	}
 	g_free (expression);
 
-	messages = summaries_from_uids (folder, uids);
+	messages = g_ptr_array_new_with_free_func (
+		(GDestroyNotify) evo_message_free);
+
+	for (guint i = 0; i < uids->len; i++) {
+		const gchar *uid = g_ptr_array_index (uids, i);
+		EvoMessage *msg = message_from_info (cfolder, uid);
+
+		if (msg != NULL)
+			g_ptr_array_add (messages, msg);
+	}
+
 	g_ptr_array_unref (uids);
+	g_ptr_array_sort (messages, compare_messages);
 	return messages;
 }
 
@@ -470,7 +530,7 @@ safe_attachment_path (const gchar *dir, const gchar *filename, guint number)
 }
 
 static void
-collect_part (CamelMimePart *part, MessageBody *body, const gchar *save_dir,
+collect_part (CamelMimePart *part, EvoMessage *msg, const gchar *save_dir,
 	      guint *attachment_number, GError **error)
 {
 	CamelContentType *ctype;
@@ -495,7 +555,7 @@ collect_part (CamelMimePart *part, MessageBody *body, const gchar *save_dir,
 
 		for (guint i = 0; i < count; i++)
 			collect_part (camel_multipart_get_part (multipart, i),
-				      body, save_dir, attachment_number, error);
+				      msg, save_dir, attachment_number, error);
 	} else if (content != NULL) {
 		gboolean is_text_plain = content_type != NULL &&
 			g_str_has_prefix (content_type, "text/plain");
@@ -505,66 +565,63 @@ collect_part (CamelMimePart *part, MessageBody *body, const gchar *save_dir,
 			(disposition != NULL &&
 			 g_ascii_strcasecmp (disposition, "attachment") == 0);
 
-		if (is_text_plain && body->text == NULL) {
+		if (is_text_plain && msg->text == NULL) {
 			GBytes *bytes = decode_content (content, error);
 			if (bytes != NULL) {
-				body->text = bytes_to_utf8 (bytes, charset);
-				g_free (body->charset);
-				body->charset = g_strdup (charset);
+				msg->text = bytes_to_utf8 (bytes, charset);
 				g_bytes_unref (bytes);
 			}
-		} else if (is_text_html && body->html == NULL) {
+		} else if (is_text_html && msg->html == NULL) {
 			GBytes *bytes = decode_content (content, error);
 			if (bytes != NULL) {
-				body->html = bytes_to_utf8 (bytes, charset);
+				msg->html = bytes_to_utf8 (bytes, charset);
 				g_bytes_unref (bytes);
 			}
 		} else if (is_attachment) {
-			Attachment *attachment = g_new0 (Attachment, 1);
+			EvoAttachment *att = g_new0 (EvoAttachment, 1);
 			gchar *fallback_name = NULL;
 
-			attachment->content_type = g_strdup (
+			att->content_type = g_strdup (
 				content_type != NULL ? content_type :
 				"application/octet-stream");
 
 			if (filename != NULL) {
-				attachment->filename = g_strdup (filename);
+				att->filename = g_strdup (filename);
 			} else {
 				fallback_name = g_strdup_printf ("attachment-%u",
 								 *attachment_number);
-				attachment->filename = g_strdup (fallback_name);
+				att->filename = g_strdup (fallback_name);
 			}
 
 			if (save_dir != NULL && *save_dir != '\0') {
 				GBytes *bytes = decode_content (content, error);
 				if (bytes != NULL) {
 					gchar *path = safe_attachment_path (
-						save_dir, attachment->filename,
+						save_dir, att->filename,
 						*attachment_number);
 					gsize size = 0;
 
 					g_bytes_get_data (bytes, &size);
-					attachment->size = size;
+					att->size = size;
 					if (!g_file_set_contents (path,
 						g_bytes_get_data (bytes, NULL),
 						size, error)) {
 						g_free (path);
 						g_free (fallback_name);
-						attachment_free (attachment);
+						evo_attachment_free (att);
 						g_bytes_unref (bytes);
-						g_free (content_type);
 						return;
 					}
 					g_free (path);
 					g_bytes_unref (bytes);
 				}
 			} else {
-				attachment->size =
+				att->size =
 					camel_data_wrapper_calculate_decoded_size_sync (
 						content, NULL, NULL);
 			}
 
-			g_ptr_array_add (body->attachments, attachment);
+			g_ptr_array_add (msg->attachments, att);
 			(*attachment_number)++;
 			g_free (fallback_name);
 		}
@@ -573,105 +630,27 @@ collect_part (CamelMimePart *part, MessageBody *body, const gchar *save_dir,
 	g_free (content_type);
 }
 
-static MessageBody *
-message_body_new (void)
-{
-	MessageBody *body = g_new0 (MessageBody, 1);
-	body->attachments = g_ptr_array_new_with_free_func (
-		(GDestroyNotify) attachment_free);
-	return body;
-}
-
 void
-message_body_free (MessageBody *body)
+evo_attachment_free (EvoAttachment *att)
 {
-	if (body == NULL)
+	if (att == NULL)
 		return;
-	g_free (body->text);
-	g_free (body->html);
-	g_free (body->charset);
-	if (body->attachments != NULL)
-		g_ptr_array_unref (body->attachments);
-	g_free (body);
+	g_free (att->filename);
+	g_free (att->content_type);
+	g_free (att);
+}
+
+static EvoMessage *
+evo_message_new (void)
+{
+	EvoMessage *msg = g_new0 (EvoMessage, 1);
+	msg->attachments = g_ptr_array_new_with_free_func (
+		(GDestroyNotify) evo_attachment_free);
+	return msg;
 }
 
 void
-attachment_free (Attachment *attachment)
-{
-	if (attachment == NULL)
-		return;
-	g_free (attachment->filename);
-	g_free (attachment->content_type);
-	g_free (attachment);
-}
-
-static gchar *
-format_address (CamelInternetAddress *address)
-{
-	if (address == NULL)
-		return NULL;
-	return camel_address_format (CAMEL_ADDRESS (address));
-}
-
-ReadMessage *
-evo_read_message (CamelFolder *folder, const gchar *uid,
-		  const gchar *save_attachments, GError **error)
-{
-	CamelMimeMessage *message;
-	ReadMessage *result;
-	MessageBody *body;
-	CamelInternetAddress *from;
-	guint attachment_number = 1;
-
-	message = camel_folder_get_message_sync (folder, uid, NULL, error);
-	if (message == NULL)
-		return NULL;
-
-	body = message_body_new ();
-	collect_part (CAMEL_MIME_PART (message), body,
-		      save_attachments, &attachment_number, error);
-	if (error != NULL && *error != NULL) {
-		message_body_free (body);
-		g_object_unref (message);
-		return NULL;
-	}
-
-	result = g_new0 (ReadMessage, 1);
-	result->uid = g_strdup (uid);
-	result->subject = g_strdup (camel_mime_message_get_subject (message));
-	from = camel_mime_message_get_from (message);
-	result->from = format_address (from);
-	result->to = format_address (camel_mime_message_get_recipients (
-		message, CAMEL_RECIPIENT_TYPE_TO));
-	result->cc = format_address (camel_mime_message_get_recipients (
-		message, CAMEL_RECIPIENT_TYPE_CC));
-	result->date = format_date (camel_mime_message_get_date (message, NULL));
-	result->message_id = g_strdup (camel_mime_message_get_message_id (message));
-
-	/* Get flags from message info if available. */
-	{
-		CamelMessageInfo *mi = camel_folder_get_message_info (folder, uid);
-		if (mi != NULL) {
-			result->flags = camel_message_info_get_flags (mi);
-			g_object_unref (mi);
-		}
-	}
-
-	result->text = body->text;
-	result->html = body->html;
-	result->attachments = body->attachments;
-
-	body->text = NULL;
-	body->html = NULL;
-	body->attachments = NULL;
-	message_body_free (body);
-	g_object_unref (message);
-
-	return result;
-}
-
-void
-read_message_free (ReadMessage *msg)
+evo_message_free (EvoMessage *msg)
 {
 	if (msg == NULL)
 		return;
@@ -689,38 +668,101 @@ read_message_free (ReadMessage *msg)
 	g_free (msg);
 }
 
-void
-msg_summary_free (MsgSummary *msg)
+static gchar *
+format_address (CamelInternetAddress *address)
 {
-	if (msg == NULL)
-		return;
-	g_free (msg->uid);
-	g_free (msg->from);
-	g_free (msg->subject);
-	g_free (msg);
+	if (address == NULL)
+		return NULL;
+	return camel_address_format (CAMEL_ADDRESS (address));
+}
+
+EvoMessage *
+evo_folder_read_message (EvoFolder *folder, const gchar *uid,
+			 const gchar *save_dir, GError **error)
+{
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
+	CamelMimeMessage *message;
+	EvoMessage *msg;
+	CamelInternetAddress *from;
+	guint attachment_number = 1;
+
+	message = camel_folder_get_message_sync (cfolder, uid, NULL, error);
+	if (message == NULL)
+		return NULL;
+
+	msg = evo_message_new ();
+	collect_part (CAMEL_MIME_PART (message), msg,
+		      save_dir, &attachment_number, error);
+	if (error != NULL && *error != NULL) {
+		evo_message_free (msg);
+		g_object_unref (message);
+		return NULL;
+	}
+
+	msg->uid = g_strdup (uid);
+	msg->subject = g_strdup (camel_mime_message_get_subject (message));
+	from = camel_mime_message_get_from (message);
+	msg->from = format_address (from);
+	msg->to = format_address (camel_mime_message_get_recipients (
+		message, CAMEL_RECIPIENT_TYPE_TO));
+	msg->cc = format_address (camel_mime_message_get_recipients (
+		message, CAMEL_RECIPIENT_TYPE_CC));
+	msg->date = format_date (camel_mime_message_get_date (message, NULL));
+	msg->message_id = g_strdup (camel_mime_message_get_message_id (message));
+
+	{
+		CamelMessageInfo *mi = camel_folder_get_message_info (cfolder, uid);
+		if (mi != NULL) {
+			msg->flags = camel_message_info_get_flags (mi);
+			g_object_unref (mi);
+		}
+	}
+
+	g_object_unref (message);
+	return msg;
 }
 
 gboolean
-evo_mark_messages (CamelFolder *folder, gchar **uids,
-		   guint n_uids, guint32 mask, guint32 set,
-		   GError **error)
+evo_folder_mark_messages (EvoFolder *folder, const gchar * const *uids,
+                          guint n_uids, EvoMessageFlag mask, EvoFlagOp op,
+                          GError **error)
 {
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
+	guint32 camel_mask = 0;
+	guint32 camel_set = 0;
+
+	if ((mask & EVO_MESSAGE_FLAG_SEEN) != 0)
+		camel_mask |= CAMEL_MESSAGE_SEEN;
+	if ((mask & EVO_MESSAGE_FLAG_FLAGGED) != 0)
+		camel_mask |= CAMEL_MESSAGE_FLAGGED;
+	if ((mask & EVO_MESSAGE_FLAG_DELETED) != 0)
+		camel_mask |= CAMEL_MESSAGE_DELETED;
+
+	if (op == EVO_FLAG_OP_SET || op == EVO_FLAG_OP_TOGGLE) {
+		if ((mask & EVO_MESSAGE_FLAG_SEEN) != 0)
+			camel_set |= CAMEL_MESSAGE_SEEN;
+		if ((mask & EVO_MESSAGE_FLAG_FLAGGED) != 0)
+			camel_set |= CAMEL_MESSAGE_FLAGGED;
+		if ((mask & EVO_MESSAGE_FLAG_DELETED) != 0)
+			camel_set |= CAMEL_MESSAGE_DELETED;
+	}
+
 	gboolean any_changed = FALSE;
 
 	for (guint i = 0; i < n_uids; i++) {
 		const gchar *uid = uids[i];
-		CamelMessageInfo *info = camel_folder_get_message_info (folder, uid);
+		CamelMessageInfo *info = camel_folder_get_message_info (cfolder, uid);
 		guint32 before = info ? camel_message_info_get_flags (info) : 0;
 
 		if (info != NULL &&
-		    (before & mask) == (set & mask)) {
-			/* Already in the desired state; nothing to do. */
+		    (before & camel_mask) == (camel_set & camel_mask)) {
 			g_clear_object (&info);
 			continue;
 		}
 		g_clear_object (&info);
 
-		if (!camel_folder_set_message_flags (folder, uid, mask, set)) {
+		if (!camel_folder_set_message_flags (cfolder, uid,
+						     camel_mask, camel_set)) {
 			g_set_error (error, CAMEL_FOLDER_ERROR,
 				     CAMEL_FOLDER_ERROR_INVALID,
 				     "Could not update flags for message %s.",
@@ -731,19 +773,7 @@ evo_mark_messages (CamelFolder *folder, gchar **uids,
 	}
 
 	if (any_changed) {
-		CamelStore *store = camel_folder_get_parent_store (folder);
-		gboolean sync_result;
-
-		if (CAMEL_IS_OFFLINE_STORE (store)) {
-			sync_result = camel_store_synchronize_sync (
-				store, FALSE, NULL, error);
-		} else {
-			sync_result = camel_folder_synchronize_sync (
-				folder, FALSE, NULL, error);
-		}
-		g_object_unref (store);
-
-		if (!sync_result)
+		if (!camel_folder_synchronize_sync (cfolder, FALSE, NULL, error))
 			return FALSE;
 	}
 

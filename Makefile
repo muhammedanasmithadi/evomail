@@ -8,8 +8,7 @@ LDLIBS += $(shell pkg-config --libs $(PKGS))
 
 SRC = \
 	src/main.c \
-	src/session.c \
-	src/accounts.c \
+	src/evoapp.c \
 	src/mail.c \
 	src/output.c \
 	src/send.c
@@ -23,7 +22,7 @@ all: $(TARGET)
 $(TARGET): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
-src/%.o: src/%.c src/evomail.h
+src/%.o: src/%.c src/evomail.h src/evoapp.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
