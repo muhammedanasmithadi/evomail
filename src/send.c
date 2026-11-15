@@ -331,9 +331,13 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 		return TRUE;
 	}
 
-	CamelStore *cs = evo_store_get_camel_store (
-		evo_store_open (app, account, error));
-	if (cs == NULL) {
+	/* Look up the SMTP EDS source and configure the transport service */
+	ESource *smtp_source = e_source_registry_ref_source (
+		evo_app_get_registry (app), account->smtp_uid);
+	if (smtp_source == NULL) {
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+			     "No Evolution source for SMTP transport %s.",
+			     account->smtp_uid);
 		g_object_unref (message);
 		return FALSE;
 	}
@@ -345,9 +349,14 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 		CAMEL_PROVIDER_TRANSPORT,
 		error));
 	if (transport == NULL) {
+		g_object_unref (smtp_source);
 		g_object_unref (message);
 		return FALSE;
 	}
+
+	/* Configure the transport with EDS source settings (host, port, auth, OAuth token) */
+	e_source_camel_configure_service (smtp_source, CAMEL_SERVICE (transport));
+	g_object_unref (smtp_source);
 
 	if (!camel_service_connect_sync (CAMEL_SERVICE (transport), NULL, error)) {
 		g_object_unref (transport);

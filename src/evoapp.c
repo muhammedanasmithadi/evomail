@@ -185,6 +185,12 @@ evo_app_get_session (EvoApp *app)
 	return app->session;
 }
 
+ESourceRegistry *
+evo_app_get_registry (EvoApp *app)
+{
+	return app->registry;
+}
+
 /* Account discovery */
 struct _EvoAccount {
 	gchar *uid;

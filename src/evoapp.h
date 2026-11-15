@@ -4,6 +4,7 @@
 #include "evomail.h"
 
 #include <camel/camel.h>
+#include <libedataserver/libedataserver.h>
 
 /* Create a new EvoApp connected to Evolution Data Server.
  * This initializes the ESourceRegistry, creates a CamelSession subclass
@@ -27,6 +28,7 @@ GPtrArray *evo_app_get_accounts (EvoApp *app);
 gboolean evo_load_accounts (EvoApp *app, GError **error);
 
 CamelSession *evo_app_get_session (EvoApp *app);
+ESourceRegistry *evo_app_get_registry (EvoApp *app);
 
 CamelStore *evo_store_get_camel_store (EvoStore *store);
 CamelFolder *evo_folder_get_camel_folder (EvoFolder *folder);
