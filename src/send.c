@@ -341,7 +341,7 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 	transport = CAMEL_TRANSPORT (camel_session_add_service (
 		evo_app_get_session (app),
 		account->smtp_uid,
-		account->backend,
+		"smtp",
 		CAMEL_PROVIDER_TRANSPORT,
 		error));
 	if (transport == NULL) {
