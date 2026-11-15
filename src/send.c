@@ -359,6 +359,8 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 	g_object_unref (smtp_source);
 
 	if (!camel_service_connect_sync (CAMEL_SERVICE (transport), NULL, error)) {
+		g_printerr ("evomail: transport connect failed: %s\n",
+			    error != NULL && *error != NULL ? (*error)->message : "unknown");
 		g_object_unref (transport);
 		g_object_unref (message);
 		return FALSE;
