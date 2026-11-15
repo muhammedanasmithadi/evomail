@@ -779,3 +779,112 @@ evo_folder_mark_messages (EvoFolder *folder, const gchar * const *uids,
 
 	return TRUE;
 }
+
+gboolean
+evo_folder_move_messages (EvoFolder *folder, const gchar * const *uids,
+                          guint n_uids, EvoFolder *dest_folder,
+                          GError **error)
+{
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
+	CamelFolder *dest = evo_folder_get_camel_folder (dest_folder);
+	gboolean success = TRUE;
+
+	for (guint i = 0; i < n_uids && success; i++) {
+		const gchar *uid = uids[i];
+
+		/* Read the message to get its content */
+		EvoMessage *msg = evo_folder_read_message (folder, uid, NULL, error);
+		if (msg == NULL)
+			return FALSE;
+
+		/* Build a new MIME message */
+		CamelMimeMessage *mime_msg = camel_mime_message_new ();
+		CamelInternetAddress *from = camel_internet_address_new ();
+		CamelInternetAddress *to = camel_internet_address_new ();
+		CamelMimePart *body_part;
+		CamelMultipart *multipart;
+		CamelMimePart *text_part;
+
+		if (msg->from)
+			camel_internet_address_add (from, "", msg->from);
+		if (msg->to)
+			camel_internet_address_add (to, "", msg->to);
+		camel_mime_message_set_from (mime_msg, from);
+		camel_mime_message_set_recipients (mime_msg, CAMEL_RECIPIENT_TYPE_TO, to);
+		g_object_unref (from);
+		g_object_unref (to);
+
+		camel_mime_message_set_subject (mime_msg, msg->subject ? msg->subject : "");
+		if (msg->message_id)
+			camel_mime_message_set_message_id (mime_msg, msg->message_id);
+
+		multipart = camel_multipart_new ();
+		camel_data_wrapper_set_mime_type (CAMEL_DATA_WRAPPER (multipart), "multipart/mixed");
+		camel_multipart_set_boundary (multipart, g_strdup_printf ("----=_MovePart_%u.%u",
+						       (guint) time (NULL), g_random_int ()));
+
+		text_part = camel_mime_part_new ();
+		gchar *type = g_strdup_printf ("text/plain; charset=UTF-8");
+		camel_mime_part_set_content (text_part, msg->text ? msg->text : "", -1, type);
+		camel_mime_part_set_encoding (text_part, CAMEL_TRANSFER_ENCODING_QUOTEDPRINTABLE);
+		g_free (type);
+		camel_multipart_add_part (multipart, text_part);
+		g_object_unref (text_part);
+
+		body_part = camel_mime_part_new ();
+		camel_medium_set_content (CAMEL_MEDIUM (body_part), CAMEL_DATA_WRAPPER (multipart));
+		camel_mime_part_set_disposition (body_part, "inline");
+		camel_medium_set_content (CAMEL_MEDIUM (mime_msg), CAMEL_DATA_WRAPPER (body_part));
+		g_object_unref (body_part);
+		g_object_unref (multipart);
+
+		/* Append to destination folder */
+		if (!camel_folder_append_message_sync (dest, mime_msg, NULL, NULL, NULL, error)) {
+			g_object_unref (mime_msg);
+			evo_message_free (msg);
+			return FALSE;
+		}
+		g_object_unref (mime_msg);
+		evo_message_free (msg);
+
+		/* Mark original as deleted */
+		if (!camel_folder_set_message_flags (cfolder, uid,
+						     CAMEL_MESSAGE_DELETED, CAMEL_MESSAGE_DELETED)) {
+			g_set_error (error, CAMEL_FOLDER_ERROR,
+				     CAMEL_FOLDER_ERROR_INVALID,
+				     "Could not update flags for message %s.", uid);
+			return FALSE;
+		}
+	}
+
+	if (success)
+		success = camel_folder_synchronize_sync (cfolder, FALSE, NULL, error);
+
+	return success;
+}
+
+gboolean
+evo_folder_copy_messages (EvoFolder *folder, const gchar * const *uids,
+                          guint n_uids, EvoFolder *dest_folder,
+                          GError **error)
+{
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
+	CamelFolder *dest = evo_folder_get_camel_folder (dest_folder);
+	GPtrArray *uid_array = g_ptr_array_new_with_free_func (g_free);
+	gboolean success;
+
+	for (guint i = 0; i < n_uids; i++)
+		g_ptr_array_add (uid_array, g_strdup (uids[i]));
+
+	success = camel_folder_transfer_messages_to_sync (cfolder,
+			uid_array, dest, FALSE, NULL, NULL, error);
+	if (!success) {
+		g_printerr ("evomail: transfer_messages_to_sync failed: %s\n",
+			    error != NULL && *error != NULL ? (*error)->message : "unknown");
+	}
+	if (success)
+		success = camel_folder_synchronize_sync (cfolder, FALSE, NULL, error);
+
+	g_ptr_array_unref (uid_array);
+	return success;
+}

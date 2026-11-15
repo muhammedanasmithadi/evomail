@@ -89,6 +89,8 @@ GPtrArray *evo_folder_list_messages (EvoFolder *folder, gboolean refresh, GError
 GPtrArray *evo_folder_search_messages (EvoFolder *folder, const gchar *query, gboolean refresh, GError **error);
 EvoMessage *evo_folder_read_message (EvoFolder *folder, const gchar *uid, const gchar *save_dir, GError **error);
 gboolean evo_folder_mark_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoMessageFlag mask, EvoFlagOp op, GError **error);
+gboolean evo_folder_move_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoFolder *dest_folder, GError **error);
+gboolean evo_folder_copy_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoFolder *dest_folder, GError **error);
 
 /* Message getters */
 const gchar *evo_message_get_uid (EvoMessage *msg);
@@ -122,6 +124,24 @@ gboolean evo_send (EvoApp *app, EvoAccount *account,
 		   gboolean html, GPtrArray *attach_paths,
 		   gboolean dry_run, gboolean save_copy, gboolean json,
 		   GError **error);
+gboolean evo_send_reply (EvoApp *app, EvoAccount *account,
+			 EvoMessage *original, const gchar *body,
+			 gboolean html, GPtrArray *attach_paths,
+			 gboolean dry_run, gboolean save_copy, gboolean json,
+			 GError **error);
+gboolean evo_send_forward (EvoApp *app, EvoAccount *account,
+			   EvoMessage *original, const gchar *body,
+			   gboolean html, GPtrArray *attach_paths,
+			   gboolean dry_run, gboolean save_copy, gboolean json,
+			   GError **error);
+
+/* Folder operations */
+gboolean evo_folder_move_messages (EvoFolder *folder, const gchar * const *uids,
+				   guint n_uids, EvoFolder *dest_folder,
+				   GError **error);
+gboolean evo_folder_copy_messages (EvoFolder *folder, const gchar * const *uids,
+				   guint n_uids, EvoFolder *dest_folder,
+				   GError **error);
 
 #ifdef __cplusplus
 }

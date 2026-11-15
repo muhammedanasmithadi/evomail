@@ -261,24 +261,19 @@ save_to_sent (EvoApp *app, EvoAccount *account, CamelMimeMessage *message,
 	return success;
 }
 
-gboolean
-evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
-	  const gchar *bcc, const gchar *subject, const gchar *body,
-	  gboolean html, GPtrArray *attach_paths, gboolean dry_run,
-	  gboolean save_copy, gboolean json, GError **error)
+static gboolean
+evo_send_message_raw (EvoApp *app, EvoAccount *account,
+		      CamelMimeMessage *message,
+		      const gchar *to, const gchar *subject,
+		      gboolean dry_run, gboolean save_copy,
+		      gboolean json, GError **error)
 {
-	CamelMimeMessage *message;
 	CamelTransport *transport = NULL;
 	CamelInternetAddress *envelope_from;
 	CamelInternetAddress *envelope_to;
 	gboolean sent;
 	gboolean saved = FALSE;
 	gboolean copy_saved = FALSE;
-
-	message = build_message (account, to, cc, bcc, subject, body, html,
-				 attach_paths, error);
-	if (message == NULL)
-		return FALSE;
 
 	if (dry_run) {
 		GOutputStream *stream = g_memory_output_stream_new_resizable ();
@@ -299,9 +294,6 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 			json_string (out, subject);
 			g_string_append_printf (out, ",\"size\":%" G_GSSIZE_FORMAT,
 						size > 0 ? size : 0);
-			g_string_append_printf (out, ",\"attachments\":%u",
-						attach_paths != NULL ?
-						attach_paths->len : 0);
 			g_string_append (out, "}\n");
 			g_print ("%s", out->str);
 			g_string_free (out, TRUE);
@@ -311,19 +303,9 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 				 account->name != NULL ? account->name : "",
 				 account->email != NULL ? account->email : "");
 			g_print ("To: %s\n", to != NULL ? to : "");
-			if (cc != NULL && *cc != '\0')
-				g_print ("Cc: %s\n", cc);
-			if (bcc != NULL && *bcc != '\0')
-				g_print ("Bcc: %s\n", bcc);
 			g_print ("Subject: %s\n", subject != NULL ? subject : "");
 			g_print ("Size: %" G_GSSIZE_FORMAT " bytes\n",
 				 size > 0 ? size : 0);
-			if (attach_paths != NULL && attach_paths->len > 0) {
-				g_print ("Attachments:\n");
-				for (guint i = 0; i < attach_paths->len; i++)
-					g_print ("  - %s\n", (const gchar *)
-						 g_ptr_array_index (attach_paths, i));
-			}
 		}
 
 		g_object_unref (stream);
@@ -354,7 +336,6 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 		return FALSE;
 	}
 
-	/* Configure the transport with EDS source settings (host, port, auth, OAuth token) */
 	e_source_camel_configure_service (smtp_source, CAMEL_SERVICE (transport));
 	g_object_unref (smtp_source);
 
@@ -431,14 +412,194 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 		g_print ("%s", out->str);
 		g_string_free (out, TRUE);
 	} else {
-		g_print ("Sent message to %s%s%s\n",
-			 to != NULL ? to : "",
-			 cc != NULL && *cc != '\0' ? ", " : "",
-			 cc != NULL && *cc != '\0' ? cc : "");
+		g_print ("Sent message to %s\n",
+			 to != NULL ? to : "");
 		if (copy_saved)
 			g_print ("Copy saved to the Sent folder.\n");
 	}
 
 	g_object_unref (message);
 	return TRUE;
+}
+
+gboolean
+evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
+	  const gchar *bcc, const gchar *subject, const gchar *body,
+	  gboolean html, GPtrArray *attach_paths, gboolean dry_run,
+	  gboolean save_copy, gboolean json, GError **error)
+{
+	CamelMimeMessage *message = build_message (account, to, cc, bcc, subject, body, html,
+						   attach_paths, error);
+	if (message == NULL)
+		return FALSE;
+
+	return evo_send_message_raw (app, account, message,
+				     to != NULL ? to : "",
+				     subject != NULL ? subject : "",
+				     dry_run, save_copy, json, error);
+}
+
+static CamelMimeMessage *
+build_reply_message (EvoAccount *account, EvoMessage *original,
+		     const gchar *body, GError **error)
+{
+	CamelMimeMessage *message = camel_mime_message_new ();
+	CamelInternetAddress *from;
+	CamelInternetAddress *to;
+	CamelMimePart *body_part;
+	CamelMultipart *multipart;
+	CamelMimePart *text_part;
+	CamelMimePart *quoted_part;
+	gchar *subject;
+	gchar *quoted_body;
+
+	message = camel_mime_message_new ();
+
+	from = camel_internet_address_new ();
+	camel_internet_address_add (from,
+				    account->name != NULL ? account->name : "",
+				    account->email != NULL ? account->email : "");
+	camel_mime_message_set_from (message, from);
+	g_object_unref (from);
+
+	to = camel_internet_address_new ();
+	camel_internet_address_add (to, "", original->from != NULL ? original->from : "");
+	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to);
+	g_object_unref (to);
+
+	subject = g_strdup_printf ("Re: %s",
+				   original->subject != NULL && g_str_has_prefix (original->subject, "Re: ") ?
+				   original->subject : original->subject);
+	if (original->subject != NULL && !g_str_has_prefix (original->subject, "Re: "))
+	{
+		g_free (subject);
+		subject = g_strdup_printf ("Re: %s", original->subject);
+	}
+	camel_mime_message_set_subject (message, subject);
+	g_free (subject);
+
+	multipart = camel_multipart_new ();
+	camel_data_wrapper_set_mime_type (CAMEL_DATA_WRAPPER (multipart), "multipart/mixed");
+	camel_multipart_set_boundary (multipart, g_strdup_printf ("----=_ReplyPart_%u.%u",
+						       (guint) time (NULL), g_random_int ()));
+
+	text_part = make_text_part (body, "text/plain");
+	camel_multipart_add_part (multipart, text_part);
+	g_object_unref (text_part);
+
+	quoted_body = g_strdup_printf ("\n\n---- Original Message ----\nFrom: %s\nDate: %s\nSubject: %s\n\n%s",
+				       original->from != NULL ? original->from : "",
+				       original->date != NULL ? original->date : "",
+				       original->subject != NULL ? original->subject : "",
+				       original->text != NULL ? original->text :
+				       (original->html != NULL ? original->html : ""));
+
+	quoted_part = make_text_part (quoted_body, "text/plain");
+	camel_multipart_add_part (multipart, quoted_part);
+	g_object_unref (quoted_part);
+
+	body_part = camel_mime_part_new ();
+	camel_medium_set_content (CAMEL_MEDIUM (body_part), CAMEL_DATA_WRAPPER (multipart));
+	camel_mime_part_set_disposition (body_part, "inline");
+	camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (body_part));
+	g_object_unref (body_part);
+	g_object_unref (multipart);
+	g_free (quoted_body);
+
+	return message;
+}
+
+static CamelMimeMessage *
+build_forward_message (EvoAccount *account, EvoMessage *original,
+		       const gchar *body, GError **error)
+{
+	CamelMimeMessage *message = camel_mime_message_new ();
+	CamelInternetAddress *from;
+	CamelMimePart *body_part;
+	CamelMultipart *multipart;
+	CamelMimePart *text_part;
+	CamelMimePart *forward_part;
+	gchar *subject;
+	gchar *forward_body;
+
+	message = camel_mime_message_new ();
+
+	from = camel_internet_address_new ();
+	camel_internet_address_add (from,
+				    account->name != NULL ? account->name : "",
+				    account->email != NULL ? account->email : "");
+	camel_mime_message_set_from (message, from);
+	g_object_unref (from);
+
+	subject = g_strdup_printf ("Fw: %s",
+				   original->subject != NULL && g_str_has_prefix (original->subject, "Fw: ") ?
+				   original->subject : original->subject);
+	if (original->subject != NULL && !g_str_has_prefix (original->subject, "Fw: "))
+	{
+		g_free (subject);
+		subject = g_strdup_printf ("Fw: %s", original->subject);
+	}
+	camel_mime_message_set_subject (message, subject);
+	g_free (subject);
+
+	forward_body = g_strdup_printf ("\n\n------- Forwarded Message -------\nFrom: %s\nDate: %s\nSubject: %s\nTo: %s\n\n%s",
+				      original->from != NULL ? original->from : "",
+				      original->date != NULL ? original->date : "",
+				      original->subject != NULL ? original->subject : "",
+				      original->to != NULL ? original->to : "",
+				      original->text != NULL ? original->text :
+				      (original->html != NULL ? original->html : ""));
+
+	multipart = camel_multipart_new ();
+	camel_data_wrapper_set_mime_type (CAMEL_DATA_WRAPPER (multipart), "multipart/mixed");
+	camel_multipart_set_boundary (multipart, g_strdup_printf ("----=_ForwardPart_%u.%u",
+						       (guint) time (NULL), g_random_int ()));
+
+	text_part = make_text_part (body != NULL ? body : "", "text/plain");
+	camel_multipart_add_part (multipart, text_part);
+	g_object_unref (text_part);
+
+	forward_part = make_text_part (forward_body, "text/plain");
+	camel_multipart_add_part (multipart, forward_part);
+	g_object_unref (forward_part);
+
+	body_part = camel_mime_part_new ();
+	camel_medium_set_content (CAMEL_MEDIUM (body_part), CAMEL_DATA_WRAPPER (multipart));
+	camel_mime_part_set_disposition (body_part, "inline");
+	camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (body_part));
+	g_object_unref (body_part);
+	g_object_unref (multipart);
+	g_free (forward_body);
+
+	return message;
+}
+
+gboolean
+evo_send_reply (EvoApp *app, EvoAccount *account, EvoMessage *original,
+		const gchar *body, gboolean html, GPtrArray *attach_paths,
+		gboolean dry_run, gboolean save_copy, gboolean json,
+		GError **error)
+{
+	CamelMimeMessage *message = build_reply_message (account, original, body, error);
+	if (message == NULL)
+		return FALSE;
+
+	return evo_send_message_raw (app, account, message,
+				     original->from != NULL ? original->from : "",
+				     original->subject != NULL ? original->subject : "",
+				     dry_run, save_copy, json, error);
+}
+
+gboolean
+evo_send_forward (EvoApp *app, EvoAccount *account, EvoMessage *original,
+		  const gchar *body, gboolean html, GPtrArray *attach_paths,
+		  gboolean dry_run, gboolean save_copy, gboolean json,
+		  GError **error)
+{
+	CamelMimeMessage *message = build_forward_message (account, original, body, error);
+	if (message == NULL)
+		return FALSE;
+
+	return evo_send_message_raw (app, account, message,
+				     "", "", dry_run, save_copy, json, error);
 }

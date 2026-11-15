@@ -36,6 +36,10 @@ static gchar **opt_attach = NULL;
 static gboolean opt_dry_run = FALSE;
 static gboolean opt_save_copy = TRUE;
 static gboolean opt_version = FALSE;
+static gboolean opt_reply = FALSE;
+static gboolean opt_forward = FALSE;
+static gchar *opt_move_to = NULL;
+static gchar *opt_copy_to = NULL;
 
 static const GOptionEntry entries[] = {
 	{ "version", 0, 0, G_OPTION_ARG_NONE, &opt_version,
@@ -88,6 +92,14 @@ static const GOptionEntry entries[] = {
 	  "Send: build the message and print a summary without sending", NULL },
 	{ "no-save-copy", 0, G_OPTION_FLAG_REVERSE, G_OPTION_ARG_NONE, &opt_save_copy,
 	  "Send: do not append a copy to the Sent folder", NULL },
+	{ "reply", 0, 0, G_OPTION_ARG_NONE, &opt_reply,
+	  "Reply to a message", NULL },
+	{ "forward", 0, 0, G_OPTION_ARG_NONE, &opt_forward,
+	  "Forward a message", NULL },
+	{ "move-to", 0, 0, G_OPTION_ARG_STRING, &opt_move_to,
+	  "Move messages to a folder", "FOLDER" },
+	{ "copy-to", 0, 0, G_OPTION_ARG_STRING, &opt_copy_to,
+	  "Copy messages to a folder", "FOLDER" },
 	{ NULL }
 };
 
@@ -448,6 +460,282 @@ cmd_send (EvoApp *app, GError **error)
 	return success;
 }
 
+static gboolean
+cmd_reply (EvoApp *app, gchar *uid, GError **error)
+{
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
+	EvoMessage *message;
+	gboolean success;
+
+	if (account == NULL)
+		return FALSE;
+
+	if (opt_body == NULL && opt_body_file == NULL && isatty (STDIN_FILENO)) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No message body given. Use --body, --body-file, "
+				     "or pipe the body on stdin.");
+		return FALSE;
+	}
+
+	if (opt_body != NULL && opt_body_file != NULL) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "Use either --body or --body-file, not both.");
+		return FALSE;
+	}
+
+	if (opt_body != NULL) {
+		/* body already set */
+	} else if (opt_body_file != NULL) {
+		if (!g_file_get_contents (opt_body_file, &opt_body, NULL, error))
+			return FALSE;
+	} else {
+		GString *input = g_string_new (NULL);
+		gchar buffer[4096];
+		gsize count;
+
+		while ((count = fread (buffer, 1, sizeof (buffer), stdin)) > 0)
+			g_string_append_len (input, buffer, count);
+		if (ferror (stdin)) {
+			g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+					     "Could not read the message body from stdin.");
+			g_string_free (input, TRUE);
+			return FALSE;
+		}
+		opt_body = g_string_free (input, FALSE);
+	}
+
+	store = evo_store_open (app, account, error);
+	if (store == NULL)
+		return FALSE;
+
+	folder = evo_folder_open (store, opt_folder, error);
+	if (folder == NULL) {
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	message = evo_folder_read_message (folder, uid, NULL, error);
+	if (message == NULL) {
+		evo_folder_close (folder);
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	GPtrArray *reply_attach_paths = NULL;
+	if (opt_attach != NULL) {
+		reply_attach_paths = g_ptr_array_new ();
+		for (gint i = 0; opt_attach[i] != NULL; i++)
+			g_ptr_array_add (reply_attach_paths, g_strdup (opt_attach[i]));
+	}
+
+	success = evo_send_reply (app, account, message,
+				  opt_body, opt_html, reply_attach_paths,
+				  opt_dry_run, opt_save_copy, opt_json,
+				  error);
+
+	if (reply_attach_paths != NULL)
+		g_ptr_array_unref (reply_attach_paths);
+	evo_message_free (message);
+	evo_folder_close (folder);
+	evo_store_close (store);
+	return success;
+}
+
+static gboolean
+cmd_forward (EvoApp *app, gchar *uid, GError **error)
+{
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
+	EvoMessage *message;
+	gboolean success;
+
+	if (account == NULL)
+		return FALSE;
+
+	if (opt_body == NULL && opt_body_file == NULL && isatty (STDIN_FILENO)) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No message body given. Use --body, --body-file, "
+				     "or pipe the body on stdin.");
+		return FALSE;
+	}
+
+	if (opt_body != NULL && opt_body_file != NULL) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "Use either --body or --body-file, not both.");
+		return FALSE;
+	}
+
+	if (opt_body != NULL) {
+		/* body already set */
+	} else if (opt_body_file != NULL) {
+		if (!g_file_get_contents (opt_body_file, &opt_body, NULL, error))
+			return FALSE;
+	} else {
+		GString *input = g_string_new (NULL);
+		gchar buffer[4096];
+		gsize count;
+
+		while ((count = fread (buffer, 1, sizeof (buffer), stdin)) > 0)
+			g_string_append_len (input, buffer, count);
+		if (ferror (stdin)) {
+			g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+					     "Could not read the message body from stdin.");
+			g_string_free (input, TRUE);
+			return FALSE;
+		}
+		opt_body = g_string_free (input, FALSE);
+	}
+
+	store = evo_store_open (app, account, error);
+	if (store == NULL)
+		return FALSE;
+
+	folder = evo_folder_open (store, opt_folder, error);
+	if (folder == NULL) {
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	message = evo_folder_read_message (folder, uid, NULL, error);
+	if (message == NULL) {
+		evo_folder_close (folder);
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	GPtrArray *fwd_attach_paths = NULL;
+	if (opt_attach != NULL) {
+		fwd_attach_paths = g_ptr_array_new ();
+		for (gint i = 0; opt_attach[i] != NULL; i++)
+			g_ptr_array_add (fwd_attach_paths, g_strdup (opt_attach[i]));
+	}
+
+	success = evo_send_forward (app, account, message,
+				    opt_body, opt_html, fwd_attach_paths,
+				    opt_dry_run, opt_save_copy, opt_json,
+				    error);
+
+	if (fwd_attach_paths != NULL)
+		g_ptr_array_unref (fwd_attach_paths);
+	evo_message_free (message);
+	evo_folder_close (folder);
+	evo_store_close (store);
+	return success;
+}
+
+static gboolean
+cmd_move (EvoApp *app, gchar **uids, gint n_uids, GError **error)
+{
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
+	EvoFolder *dest_folder;
+	gboolean success;
+
+	if (account == NULL)
+		return FALSE;
+
+	if (n_uids == 0) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No message UIDs given.");
+		return FALSE;
+	}
+
+	if (opt_move_to == NULL) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No destination folder given. Use --move-to FOLDER.");
+		return FALSE;
+	}
+
+	store = evo_store_open (app, account, error);
+	if (store == NULL)
+		return FALSE;
+
+	folder = evo_folder_open (store, opt_folder, error);
+	if (folder == NULL) {
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	dest_folder = evo_folder_open (store, opt_move_to, error);
+	if (dest_folder == NULL) {
+		evo_folder_close (folder);
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	success = evo_folder_move_messages (folder, (const gchar * const *) uids,
+					    n_uids, dest_folder, error);
+
+	if (!success) {
+		g_printerr ("evomail: move failed: %s\n",
+			    error != NULL && *error != NULL ? (*error)->message : "unknown");
+	}
+
+	evo_folder_close (dest_folder);
+	evo_folder_close (folder);
+	evo_store_close (store);
+	return success;
+}
+
+static gboolean
+cmd_copy (EvoApp *app, gchar **uids, gint n_uids, GError **error)
+{
+	EvoAccount *account = evo_app_find_account (app, opt_account, error);
+	EvoStore *store;
+	EvoFolder *folder;
+	EvoFolder *dest_folder;
+	gboolean success;
+
+	if (account == NULL)
+		return FALSE;
+
+	if (n_uids == 0) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No message UIDs given.");
+		return FALSE;
+	}
+
+	if (opt_copy_to == NULL) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No destination folder given. Use --copy-to FOLDER.");
+		return FALSE;
+	}
+
+	store = evo_store_open (app, account, error);
+	if (store == NULL)
+		return FALSE;
+
+	folder = evo_folder_open (store, opt_folder, error);
+	if (folder == NULL) {
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	dest_folder = evo_folder_open (store, opt_copy_to, error);
+	if (dest_folder == NULL) {
+		evo_folder_close (folder);
+		evo_store_close (store);
+		return FALSE;
+	}
+
+	success = evo_folder_copy_messages (folder, (const gchar * const *) uids,
+					    n_uids, dest_folder, error);
+
+	if (!success) {
+		g_printerr ("evomail: copy failed: %s\n",
+			    error != NULL && *error != NULL ? (*error)->message : "unknown");
+	}
+
+	evo_folder_close (dest_folder);
+	evo_folder_close (folder);
+	evo_store_close (store);
+	return success;
+}
+
 int
 main (int argc, char **argv)
 {
@@ -611,6 +899,30 @@ main (int argc, char **argv)
 			result = 1;
 	} else if (g_strcmp0 (command, "send") == 0) {
 		if (!cmd_send (app, &error))
+			result = 1;
+	} else if (g_strcmp0 (command, "reply") == 0) {
+		if (argc < 3) {
+			g_set_error_literal (&error, G_IO_ERROR,
+					     G_IO_ERROR_INVALID_ARGUMENT,
+					     "Reply needs a message UID.");
+			result = 1;
+		} else if (!cmd_reply (app, argv[2], &error)) {
+			result = 1;
+		}
+	} else if (g_strcmp0 (command, "forward") == 0) {
+		if (argc < 3) {
+			g_set_error_literal (&error, G_IO_ERROR,
+					     G_IO_ERROR_INVALID_ARGUMENT,
+					     "Forward needs a message UID.");
+			result = 1;
+		} else if (!cmd_forward (app, argv[2], &error)) {
+			result = 1;
+		}
+	} else if (g_strcmp0 (command, "move") == 0) {
+		if (!cmd_move (app, &argv[2], argc - 2, &error))
+			result = 1;
+	} else if (g_strcmp0 (command, "copy") == 0) {
+		if (!cmd_copy (app, &argv[2], argc - 2, &error))
 			result = 1;
 	} else {
 		g_printerr ("evomail: unknown command “%s”. Run with --help.\n",
