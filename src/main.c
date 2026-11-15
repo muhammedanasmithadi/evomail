@@ -538,7 +538,7 @@ main (int argc, char **argv)
 	const gchar *command;
 	gint result = 0;
 
-	context = g_option_context_new ("COMMAND [ARGS] — a CLI for Evolution mail");
+	context = g_option_context_new ("COMMAND [ARGS] - a CLI for Evolution mail");
 	g_option_context_add_main_entries (context, entries, NULL);
 	g_option_context_set_summary (context,
 		"Commands:\n"
