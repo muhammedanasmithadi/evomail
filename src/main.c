@@ -640,6 +640,7 @@ cmd_forward (EvoApp *app, gchar *uid, GError **error)
 	}
 
 	success = evo_send_forward (app, account, message,
+				    opt_to, opt_cc, opt_bcc,
 				    opt_body, opt_html, fwd_attach_paths,
 				    opt_dry_run, opt_save_copy, opt_json,
 				    error);
@@ -723,6 +724,7 @@ cmd_forward_as_attachment (EvoApp *app, gchar *uid, GError **error)
 	}
 
 	success = evo_send_forward_as_attachment (app, account, message,
+						  opt_to, opt_cc, opt_bcc,
 						  opt_body, opt_html, fwd_attach_paths,
 						  opt_dry_run, opt_save_copy, opt_json,
 						  error);

@@ -319,10 +319,14 @@ build_reply_message (EvoAccount *account, EvoMessage *original,
 
 static CamelMimeMessage *
 build_forward_message (EvoAccount *account, EvoMessage *original,
+		       const gchar *to, const gchar *cc, const gchar *bcc,
 		       const gchar *body, GError **error)
 {
 	CamelMimeMessage *message = camel_mime_message_new ();
 	CamelInternetAddress *from;
+	CamelInternetAddress *to_addr;
+	CamelInternetAddress *cc_addr;
+	CamelInternetAddress *bcc_addr;
 	CamelMimePart *body_part;
 	CamelMultipart *multipart;
 	CamelMimePart *text_part;
@@ -338,6 +342,39 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 				    account->email != NULL ? account->email : "");
 	camel_mime_message_set_from (message, from);
 	g_object_unref (from);
+
+	to_addr = parse_address (to, "To", error);
+	if (to_addr == NULL)
+		return NULL;
+	cc_addr = parse_address (cc, "Cc", error);
+	if (cc_addr == NULL) {
+		g_object_unref (to_addr);
+		return NULL;
+	}
+	bcc_addr = parse_address (bcc, "Bcc", error);
+	if (bcc_addr == NULL) {
+		g_object_unref (to_addr);
+		g_object_unref (cc_addr);
+		return NULL;
+	}
+
+	if (camel_address_length (CAMEL_ADDRESS (to_addr)) == 0 &&
+	    camel_address_length (CAMEL_ADDRESS (cc_addr)) == 0 &&
+	    camel_address_length (CAMEL_ADDRESS (bcc_addr)) == 0) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No recipients given. Use --to, --cc, or --bcc.");
+		g_object_unref (bcc_addr);
+		g_object_unref (cc_addr);
+		g_object_unref (to_addr);
+		return NULL;
+	}
+
+	if (camel_address_length (CAMEL_ADDRESS (to_addr)) > 0)
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_addr);
+	if (camel_address_length (CAMEL_ADDRESS (cc_addr)) > 0)
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_CC, cc_addr);
+	if (camel_address_length (CAMEL_ADDRESS (bcc_addr)) > 0)
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_BCC, bcc_addr);
 
 	subject = g_strdup_printf ("Fwd: %s",
 				   original->subject != NULL && g_str_has_prefix (original->subject, "Fw: ") ?
@@ -376,6 +413,9 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 	camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (body_part));
 	g_object_unref (body_part);
 	g_object_unref (multipart);
+	g_object_unref (bcc_addr);
+	g_object_unref (cc_addr);
+	g_object_unref (to_addr);
 	g_free (forward_body);
 
 	return message;
@@ -604,30 +644,35 @@ evo_send_reply (EvoApp *app, EvoAccount *account, EvoMessage *original,
 
 gboolean
 evo_send_forward (EvoApp *app, EvoAccount *account, EvoMessage *original,
+		  const gchar *to, const gchar *cc, const gchar *bcc,
 		  const gchar *body, gboolean html, GPtrArray *attach_paths,
 		  gboolean dry_run, gboolean save_copy, gboolean json,
 		  GError **error)
 {
-	CamelMimeMessage *message = build_forward_message (account, original, body, error);
+	CamelMimeMessage *message = build_forward_message (account, original,
+							   to, cc, bcc,
+							   body, error);
 	if (message == NULL)
 		return FALSE;
 
 	return evo_send_message_raw (app, account, message,
-				     original->from != NULL ? original->from : "",
+				     to != NULL ? to : "",
 				     original->subject != NULL ? original->subject : "",
 				     dry_run, save_copy, json, error);
 }
 
 gboolean
 evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
-				EvoMessage *original, const gchar *body,
-				gboolean html, GPtrArray *attach_paths,
-				gboolean dry_run, gboolean save_copy, gboolean json,
-				GError **error)
+				EvoMessage *original, const gchar *to,
+				const gchar *cc, const gchar *bcc,
+				const gchar *body, gboolean html,
+				GPtrArray *attach_paths,
+				gboolean dry_run, gboolean save_copy,
+				gboolean json, GError **error)
 {
 	CamelMimeMessage *message = camel_mime_message_new ();
 	CamelInternetAddress *from;
-	CamelInternetAddress *to;
+	CamelInternetAddress *to_recipient;
 	CamelMimePart *body_part;
 	CamelMultipart *multipart;
 	CamelMimePart *text_part;
@@ -636,6 +681,9 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	GOutputStream *stream;
 	CamelMimeMessage *orig_msg;
 	gchar *orig_str;
+	CamelInternetAddress *to_addr;
+	CamelInternetAddress *cc_addr;
+	CamelInternetAddress *bcc_addr;
 
 	message = camel_mime_message_new ();
 
@@ -646,10 +694,32 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	camel_mime_message_set_from (message, from);
 	g_object_unref (from);
 
-	to = camel_internet_address_new ();
-	camel_internet_address_add (to, "", original->from != NULL ? original->from : "");
-	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to);
-	g_object_unref (to);
+	to_recipient = camel_internet_address_new ();
+	camel_internet_address_add (to_recipient, "", original->from != NULL ? original->from : "");
+	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_recipient);
+	g_object_unref (to_recipient);
+
+	to_addr = parse_address (to, "To", error);
+	if (to_addr == NULL)
+		return FALSE;
+	cc_addr = parse_address (cc, "Cc", error);
+	if (cc_addr == NULL) {
+		g_object_unref (to_addr);
+		return FALSE;
+	}
+	bcc_addr = parse_address (bcc, "Bcc", error);
+	if (bcc_addr == NULL) {
+		g_object_unref (to_addr);
+		g_object_unref (cc_addr);
+		return FALSE;
+	}
+
+	if (camel_address_length (CAMEL_ADDRESS (to_addr)) > 0)
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_addr);
+	if (camel_address_length (CAMEL_ADDRESS (cc_addr)) > 0)
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_CC, cc_addr);
+	if (camel_address_length (CAMEL_ADDRESS (bcc_addr)) > 0)
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_BCC, bcc_addr);
 
 	subject = g_strdup_printf ("Fwd: %s",
 				   original->subject != NULL && g_str_has_prefix (original->subject, "Fw: ") ?
@@ -724,7 +794,7 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	g_free (orig_str);
 
 	return evo_send_message_raw (app, account, message,
-				     original->from != NULL ? original->from : "",
+				     to != NULL ? to : "",
 				     original->subject != NULL ? original->subject : "",
 				     dry_run, save_copy, json, error);
 }

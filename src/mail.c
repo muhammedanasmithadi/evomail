@@ -728,16 +728,16 @@ evo_folder_export_message (EvoFolder *folder, const gchar *uid,
 {
 	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
 	CamelMimeMessage *message;
-	GFileOutputStream *stream;
-	GFile *file;
 	gboolean success;
 
 	message = camel_folder_get_message_sync (cfolder, uid, NULL, error);
 	if (message == NULL)
 		return FALSE;
 
-	file = g_file_new_for_path (path);
-	stream = g_file_create (file, G_FILE_CREATE_NONE, NULL, error);
+	/* Remove existing file if any, then create */
+	GFile *file = g_file_new_for_path (path);
+	g_file_delete (file, NULL, NULL);
+	GFileOutputStream *stream = g_file_create (file, G_FILE_CREATE_NONE, NULL, error);
 	g_object_unref (file);
 	if (stream == NULL) {
 		g_object_unref (message);
