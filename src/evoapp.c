@@ -623,12 +623,76 @@ evo_account_get_smtp_uid (EvoAccount *account)
 	return account->smtp_uid;
 }
 
-/* Config file */
-static const gchar *
+/* Config file editing */
+static gchar *
 config_path (void)
 {
 	const gchar *home = g_get_home_dir ();
 	return g_build_filename (home, ".config", "evomail", "config.ini", NULL);
+}
+
+gboolean
+evo_config_set_default_account (const gchar *account_uid)
+{
+	if (config_file == NULL) {
+		config_file = g_key_file_new ();
+
+		/* Load existing config if present */
+		gchar *path = config_path ();
+		if (g_file_test (path, G_FILE_TEST_EXISTS)) {
+			g_key_file_load_from_file (config_file, path,
+						   G_KEY_FILE_NONE, NULL);
+		}
+		g_free (path);
+	}
+
+	g_key_file_set_string (config_file, "account", "default", account_uid);
+
+	gchar *path = config_path ();
+	gboolean success = g_key_file_save_to_file (config_file, path, NULL);
+	g_free (path);
+
+	if (!success) {
+		return FALSE;
+	}
+
+	/* Update the in-memory default too */
+	g_free (config_default_account);
+	config_default_account = g_strdup (account_uid);
+
+	return TRUE;
+}
+
+gboolean
+evo_config_set_default_folder (const gchar *folder_name)
+{
+	if (config_file == NULL) {
+		config_file = g_key_file_new ();
+
+		/* Load existing config if present */
+		gchar *path = config_path ();
+		if (g_file_test (path, G_FILE_TEST_EXISTS)) {
+			g_key_file_load_from_file (config_file, path,
+						   G_KEY_FILE_NONE, NULL);
+		}
+		g_free (path);
+	}
+
+	g_key_file_set_string (config_file, "folder", "default", folder_name);
+
+	gchar *path = config_path ();
+	gboolean success = g_key_file_save_to_file (config_file, path, NULL);
+	g_free (path);
+
+	if (!success) {
+		return FALSE;
+	}
+
+	/* Update the in-memory default too */
+	g_free (config_default_folder);
+	config_default_folder = g_strdup (folder_name);
+
+	return TRUE;
 }
 
 gboolean

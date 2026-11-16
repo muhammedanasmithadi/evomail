@@ -40,6 +40,9 @@ static gboolean opt_reply = FALSE;
 static gboolean opt_forward = FALSE;
 static gchar *opt_move_to = NULL;
 static gchar *opt_copy_to = NULL;
+static gboolean opt_config = FALSE;
+static gchar *opt_config_set_account = NULL;
+static gchar *opt_config_set_folder = NULL;
 
 static const GOptionEntry entries[] = {
 	{ "version", 0, 0, G_OPTION_ARG_NONE, &opt_version,
@@ -100,6 +103,12 @@ static const GOptionEntry entries[] = {
 	  "Move messages to a folder", "FOLDER" },
 	{ "copy-to", 0, 0, G_OPTION_ARG_STRING, &opt_copy_to,
 	  "Copy messages to a folder", "FOLDER" },
+	{ "config", 0, 0, G_OPTION_ARG_NONE, &opt_config,
+	  "Configure evomail settings", NULL },
+	{ "config-set-account", 0, 0, G_OPTION_ARG_STRING, &opt_config_set_account,
+	  "Config: set default account", "ACCOUNT" },
+	{ "config-set-folder", 0, 0, G_OPTION_ARG_STRING, &opt_config_set_folder,
+	  "Config: set default folder", "FOLDER" },
 	{ NULL }
 };
 
@@ -736,6 +745,52 @@ cmd_copy (EvoApp *app, gchar **uids, gint n_uids, GError **error)
 	return success;
 }
 
+static gboolean
+cmd_config (EvoApp *app, GError **error)
+{
+	gboolean changed = FALSE;
+
+	if (opt_config_set_account != NULL) {
+		if (!evo_config_set_default_account (opt_config_set_account)) {
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+				     "Failed to set default account to %s",
+				     opt_config_set_account);
+			return FALSE;
+		}
+		g_print ("Default account set to %s\n", opt_config_set_account);
+		changed = TRUE;
+	}
+
+	if (opt_config_set_folder != NULL) {
+		if (!evo_config_set_default_folder (opt_config_set_folder)) {
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+				     "Failed to set default folder to %s",
+				     opt_config_set_folder);
+			return FALSE;
+		}
+		g_print ("Default folder set to %s\n", opt_config_set_folder);
+		changed = TRUE;
+	}
+
+	if (!changed) {
+		/* Print current config */
+		const gchar *def_account = evo_config_get_default_account ();
+		const gchar *def_folder = evo_config_get_default_folder ();
+
+		g_print ("Current configuration:\n");
+		if (def_account != NULL)
+			g_print ("  default account: %s\n", def_account);
+		else
+			g_print ("  default account: (none)\n");
+		if (def_folder != NULL)
+			g_print ("  default folder: %s\n", def_folder);
+		else
+			g_print ("  default folder: (none)\n");
+	}
+
+	return TRUE;
+}
+
 int
 main (int argc, char **argv)
 {
@@ -779,6 +834,30 @@ main (int argc, char **argv)
 
 	if (opt_version) {
 		g_print ("evomail 0.1.0\n");
+		result = 0;
+		goto cleanup;
+	}
+
+	if (opt_config_set_account != NULL) {
+		if (!evo_config_set_default_account (opt_config_set_account)) {
+			g_printerr ("evomail: failed to set default account to %s\n",
+				    opt_config_set_account);
+			result = 1;
+			goto cleanup;
+		}
+		g_print ("Default account set to %s\n", opt_config_set_account);
+		result = 0;
+		goto cleanup;
+	}
+
+	if (opt_config_set_folder != NULL) {
+		if (!evo_config_set_default_folder (opt_config_set_folder)) {
+			g_printerr ("evomail: failed to set default folder to %s\n",
+				    opt_config_set_folder);
+			result = 1;
+			goto cleanup;
+		}
+		g_print ("Default folder set to %s\n", opt_config_set_folder);
 		result = 0;
 		goto cleanup;
 	}
@@ -931,6 +1010,9 @@ main (int argc, char **argv)
 			result = 1;
 	} else if (g_strcmp0 (command, "copy") == 0) {
 		if (!cmd_copy (app, &argv[2], argc - 2, &error))
+			result = 1;
+	} else if (g_strcmp0 (command, "config") == 0) {
+		if (!cmd_config (app, &error))
 			result = 1;
 	} else {
 		g_printerr ("evomail: unknown command “%s”. Run with --help.\n",

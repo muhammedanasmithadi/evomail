@@ -39,4 +39,7 @@ void     evo_config_free (void);
 const gchar *evo_config_get_default_account (void);
 const gchar *evo_config_get_default_folder (void);
 
+gboolean evo_config_set_default_account (const gchar *account_uid);
+gboolean evo_config_set_default_folder (const gchar *folder_name);
+
 #endif /* EVO_APP_H */
