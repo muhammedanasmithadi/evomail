@@ -141,6 +141,11 @@ gboolean evo_send_forward (EvoApp *app, EvoAccount *account,
 			   gboolean html, GPtrArray *attach_paths,
 			   gboolean dry_run, gboolean save_copy, gboolean json,
 			   GError **error);
+gboolean evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
+				       EvoMessage *original, const gchar *body,
+				       gboolean html, GPtrArray *attach_paths,
+				       gboolean dry_run, gboolean save_copy, gboolean json,
+				       GError **error);
 
 /* Folder operations */
 gboolean evo_folder_move_messages (EvoFolder *folder, const gchar * const *uids,
