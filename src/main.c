@@ -557,8 +557,11 @@ cmd_reply (EvoApp *app, gchar *uid, GError **error)
 				  opt_reply_all,
 				  error);
 
-	if (reply_attach_paths != NULL)
+	if (reply_attach_paths != NULL) {
+		for (gint i = 0; i < reply_attach_paths->len; i++)
+			g_free (g_ptr_array_index (reply_attach_paths, i));
 		g_ptr_array_unref (reply_attach_paths);
+	}
 	evo_message_free (message);
 	evo_folder_close (folder);
 	evo_store_close (store);
@@ -723,8 +726,11 @@ cmd_forward_as_attachment (EvoApp *app, gchar *uid, GError **error)
 						  opt_dry_run, opt_save_copy, opt_json,
 						  error);
 
-	if (fwd_attach_paths != NULL)
+	if (fwd_attach_paths != NULL) {
+		for (gint i = 0; i < fwd_attach_paths->len; i++)
+			g_free (g_ptr_array_index (fwd_attach_paths, i));
 		g_ptr_array_unref (fwd_attach_paths);
+	}
 	evo_message_free (message);
 	evo_folder_close (folder);
 	evo_store_close (store);
