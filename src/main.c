@@ -871,6 +871,11 @@ cmd_move (EvoApp *app, gchar **uids, gint n_uids, GError **error)
 	if (!success) {
 		g_printerr ("evomail: move failed: %s\n",
 			    error != NULL && *error != NULL ? (*error)->message : "unknown");
+	} else if (opt_json) {
+		g_print ("{\"moved\":%d}\n", n_uids);
+	} else {
+		g_print ("Moved %d message%s.\n", n_uids,
+			 n_uids == 1 ? "" : "s");
 	}
 
 	evo_folder_close (dest_folder);
@@ -926,6 +931,11 @@ cmd_copy (EvoApp *app, gchar **uids, gint n_uids, GError **error)
 	if (!success) {
 		g_printerr ("evomail: copy failed: %s\n",
 			    error != NULL && *error != NULL ? (*error)->message : "unknown");
+	} else if (opt_json) {
+		g_print ("{\"copied\":%d}\n", n_uids);
+	} else {
+		g_print ("Copied %d message%s.\n", n_uids,
+			 n_uids == 1 ? "" : "s");
 	}
 
 	evo_folder_close (dest_folder);

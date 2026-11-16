@@ -359,6 +359,8 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 
 	multipart = camel_multipart_new ();
 	camel_data_wrapper_set_mime_type (CAMEL_DATA_WRAPPER (multipart), "multipart/mixed");
+	camel_multipart_set_boundary (multipart, g_strdup_printf ("----=_ForwardPart_%u.%u",
+								 (guint) time (NULL), g_random_int ()));
 
 	text_part = make_text_part (body != NULL ? body : "", "text/plain");
 	camel_multipart_add_part (multipart, text_part);
@@ -611,7 +613,9 @@ evo_send_forward (EvoApp *app, EvoAccount *account, EvoMessage *original,
 		return FALSE;
 
 	return evo_send_message_raw (app, account, message,
-				     "", "", dry_run, save_copy, json, error);
+				     original->from != NULL ? original->from : "",
+				     original->subject != NULL ? original->subject : "",
+				     dry_run, save_copy, json, error);
 }
 
 gboolean
