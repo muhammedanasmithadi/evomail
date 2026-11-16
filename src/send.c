@@ -629,11 +629,9 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	CamelMimePart *text_part;
 	CamelMimePart *forward_part;
 	gchar *subject;
-	gchar *forward_body;
 	GOutputStream *stream;
 	CamelMimeMessage *orig_msg;
 	gchar *orig_str;
-	gsize orig_len;
 
 	message = camel_mime_message_new ();
 
@@ -706,7 +704,7 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	g_object_unref (text_part);
 
 	forward_part = camel_mime_part_new ();
-	camel_mime_part_set_content (forward_part, orig_str, orig_len,
+	camel_mime_part_set_content (forward_part, orig_str, strlen (orig_str),
 				     "message/rfc822");
 	camel_mime_part_set_filename (forward_part, "message.eml");
 	camel_mime_part_set_disposition (forward_part, "attachment");
@@ -719,7 +717,6 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (body_part));
 	g_object_unref (body_part);
 	g_object_unref (multipart);
-	g_free (forward_body);
 	g_free (orig_str);
 
 	return evo_send_message_raw (app, account, message,
