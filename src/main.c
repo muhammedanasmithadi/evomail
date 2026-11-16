@@ -37,6 +37,7 @@ static gboolean opt_dry_run = FALSE;
 static gboolean opt_save_copy = TRUE;
 static gboolean opt_version = FALSE;
 static gboolean opt_reply = FALSE;
+static gboolean opt_reply_all = FALSE;
 static gboolean opt_forward = FALSE;
 static gchar *opt_move_to = NULL;
 static gchar *opt_copy_to = NULL;
@@ -97,6 +98,8 @@ static const GOptionEntry entries[] = {
 	  "Send: do not append a copy to the Sent folder", NULL },
 	{ "reply", 0, 0, G_OPTION_ARG_NONE, &opt_reply,
 	  "Reply to a message", NULL },
+	{ "reply-all", 0, 0, G_OPTION_ARG_NONE, &opt_reply_all,
+	  "Reply to all recipients", NULL },
 	{ "forward", 0, 0, G_OPTION_ARG_NONE, &opt_forward,
 	  "Forward a message", NULL },
 	{ "move-to", 0, 0, G_OPTION_ARG_STRING, &opt_move_to,
@@ -542,6 +545,7 @@ cmd_reply (EvoApp *app, gchar *uid, GError **error)
 	success = evo_send_reply (app, account, message,
 				  opt_body, opt_html, reply_attach_paths,
 				  opt_dry_run, opt_save_copy, opt_json,
+				  opt_reply_all,
 				  error);
 
 	if (reply_attach_paths != NULL)

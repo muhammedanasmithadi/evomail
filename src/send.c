@@ -441,7 +441,8 @@ evo_send (EvoApp *app, EvoAccount *account, const gchar *to, const gchar *cc,
 
 static CamelMimeMessage *
 build_reply_message (EvoAccount *account, EvoMessage *original,
-		     const gchar *body, GError **error)
+		     const gchar *body, gboolean reply_all,
+		     GError **error)
 {
 	CamelMimeMessage *message = camel_mime_message_new ();
 	CamelInternetAddress *from;
@@ -464,6 +465,15 @@ build_reply_message (EvoAccount *account, EvoMessage *original,
 
 	to = camel_internet_address_new ();
 	camel_internet_address_add (to, "", original->from != NULL ? original->from : "");
+
+	/* Add CC recipients if reply-all */
+	if (reply_all && original->cc != NULL && *original->cc != '\0') {
+		CamelInternetAddress *cc_addr = camel_internet_address_new ();
+		camel_address_decode (CAMEL_ADDRESS (cc_addr), original->cc);
+		camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_CC, cc_addr);
+		g_object_unref (cc_addr);
+	}
+
 	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to);
 	g_object_unref (to);
 
@@ -578,9 +588,11 @@ gboolean
 evo_send_reply (EvoApp *app, EvoAccount *account, EvoMessage *original,
 		const gchar *body, gboolean html, GPtrArray *attach_paths,
 		gboolean dry_run, gboolean save_copy, gboolean json,
+		gboolean reply_all,
 		GError **error)
 {
-	CamelMimeMessage *message = build_reply_message (account, original, body, error);
+	CamelMimeMessage *message = build_reply_message (account, original, body,
+							 reply_all, error);
 	if (message == NULL)
 		return FALSE;
 

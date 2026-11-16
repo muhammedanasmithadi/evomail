@@ -134,6 +134,7 @@ gboolean evo_send_reply (EvoApp *app, EvoAccount *account,
 			 EvoMessage *original, const gchar *body,
 			 gboolean html, GPtrArray *attach_paths,
 			 gboolean dry_run, gboolean save_copy, gboolean json,
+			 gboolean reply_all,
 			 GError **error);
 gboolean evo_send_forward (EvoApp *app, EvoAccount *account,
 			   EvoMessage *original, const gchar *body,
