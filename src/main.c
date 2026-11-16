@@ -1,6 +1,7 @@
 #include "evomail.h"
 #include "evoapp.h"
 
+#include <locale.h>
 #include <camel/camel.h>
 #include <string.h>
 #include <unistd.h>
@@ -1090,6 +1091,8 @@ main (int argc, char **argv)
 	EvoApp *app;
 	const gchar *command;
 	gint result = 0;
+
+	setlocale (LC_ALL, "");
 
 	context = g_option_context_new ("COMMAND [ARGS] - a CLI for Evolution mail");
 	g_option_context_add_main_entries (context, entries, NULL);
