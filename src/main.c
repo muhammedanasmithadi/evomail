@@ -802,11 +802,19 @@ main (int argc, char **argv)
 		goto cleanup;
 	}
 
+	if (!evo_config_load ()) {
+		/* Config file not found or invalid - continue without defaults */
+	}
+
 	if (!evo_load_accounts (app, &error)) {
 		g_printerr ("evomail: %s\n", error->message);
 		g_clear_error (&error);
 		result = 1;
 		goto cleanup;
+	}
+
+	if (opt_folder == NULL) {
+		opt_folder = (gchar *) evo_config_get_default_folder ();
 	}
 
 	if (g_strcmp0 (command, "version") == 0) {

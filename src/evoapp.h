@@ -33,4 +33,10 @@ ESourceRegistry *evo_app_get_registry (EvoApp *app);
 CamelStore *evo_store_get_camel_store (EvoStore *store);
 CamelFolder *evo_folder_get_camel_folder (EvoFolder *folder);
 
+/* Config file */
+gboolean evo_config_load (void);
+void     evo_config_free (void);
+const gchar *evo_config_get_default_account (void);
+const gchar *evo_config_get_default_folder (void);
+
 #endif /* EVO_APP_H */

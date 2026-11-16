@@ -69,6 +69,12 @@ void     evo_app_free (EvoApp *app);
 GPtrArray *evo_app_get_accounts (EvoApp *app);
 EvoAccount *evo_app_find_account (EvoApp *app, const gchar *selector, GError **error);
 
+/* Config file */
+gboolean evo_config_load (void);
+void     evo_config_free (void);
+const gchar *evo_config_get_default_account (void);
+const gchar *evo_config_get_default_folder (void);
+
 /* Account properties */
 const gchar *evo_account_get_uid (EvoAccount *account);
 const gchar *evo_account_get_name (EvoAccount *account);

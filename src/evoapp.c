@@ -4,6 +4,11 @@
 #include <camel/camel.h>
 #include <libedataserver/libedataserver.h>
 
+/* Config file state */
+static GKeyFile *config_file = NULL;
+static gchar *config_default_account = NULL;
+static gchar *config_default_folder = NULL;
+
 /* EvoApp is opaque - its definition lives only here. */
 struct _EvoApp {
 	ESourceRegistry *registry;
@@ -414,11 +419,14 @@ evo_app_find_account (EvoApp *app, const gchar *selector, GError **error)
 	EvoAccount *fallback = NULL;
 	GPtrArray *matches;
 	const gchar *env_selector;
+	const gchar *config_selector;
 
 	env_selector = g_getenv ("EVOMAIL_ACCOUNT");
+	config_selector = evo_config_get_default_account ();
 	if (selector == NULL || *selector == '\0') {
 		selector = (env_selector != NULL && *env_selector != '\0') ?
-			   env_selector : NULL;
+			   env_selector : (config_selector != NULL && *config_selector != '\0') ?
+			   config_selector : NULL;
 	}
 
 	if (selector == NULL) {
@@ -613,4 +621,66 @@ const gchar *
 evo_account_get_smtp_uid (EvoAccount *account)
 {
 	return account->smtp_uid;
+}
+
+/* Config file */
+static const gchar *
+config_path (void)
+{
+	const gchar *home = g_get_home_dir ();
+	return g_build_filename (home, ".config", "evomail", "config.ini", NULL);
+}
+
+gboolean
+evo_config_load (void)
+{
+	GKeyFile *key_file;
+	gchar *config_path_str;
+	gboolean result = FALSE;
+
+	config_file = g_key_file_new ();
+	config_path_str = config_path ();
+
+	if (!g_key_file_load_from_file (config_file, config_path_str,
+					G_KEY_FILE_NONE, NULL)) {
+		g_free (config_path_str);
+		g_object_unref (config_file);
+		config_file = NULL;
+		return FALSE;
+	}
+
+	config_default_account = g_key_file_get_string (config_file,
+							"account", "default", NULL);
+	config_default_folder = g_key_file_get_string (config_file,
+							"folder", "default", NULL);
+
+	g_free (config_path_str);
+	result = TRUE;
+
+	return result;
+}
+
+void
+evo_config_free (void)
+{
+	if (config_file != NULL) {
+		g_object_unref (config_file);
+		config_file = NULL;
+	}
+	g_free (config_default_account);
+	config_default_account = NULL;
+	g_free (config_default_folder);
+	config_default_folder = NULL;
+}
+
+const gchar *
+evo_config_get_default_account (void)
+{
+	return config_default_account;
+}
+
+const gchar *
+evo_config_get_default_folder (void)
+{
+	return config_default_folder;
 }
