@@ -723,6 +723,37 @@ evo_folder_read_message (EvoFolder *folder, const gchar *uid,
 }
 
 gboolean
+evo_folder_export_message (EvoFolder *folder, const gchar *uid,
+			   const gchar *path, GError **error)
+{
+	CamelFolder *cfolder = evo_folder_get_camel_folder (folder);
+	CamelMimeMessage *message;
+	GFileOutputStream *stream;
+	GFile *file;
+	gboolean success;
+
+	message = camel_folder_get_message_sync (cfolder, uid, NULL, error);
+	if (message == NULL)
+		return FALSE;
+
+	file = g_file_new_for_path (path);
+	stream = g_file_create (file, G_FILE_CREATE_NONE, NULL, error);
+	g_object_unref (file);
+	if (stream == NULL) {
+		g_object_unref (message);
+		return FALSE;
+	}
+
+	success = camel_data_wrapper_write_to_output_stream_sync (
+		CAMEL_DATA_WRAPPER (message), G_OUTPUT_STREAM (stream), NULL, error);
+	g_output_stream_close (G_OUTPUT_STREAM (stream), NULL, NULL);
+	g_object_unref (stream);
+	g_object_unref (message);
+
+	return success;
+}
+
+gboolean
 evo_folder_mark_messages (EvoFolder *folder, const gchar * const *uids,
                           guint n_uids, EvoMessageFlag mask, EvoFlagOp op,
                           GError **error)

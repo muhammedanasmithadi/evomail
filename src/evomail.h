@@ -94,6 +94,7 @@ gchar *evo_find_special_folder (EvoStore *store, guint32 type, GError **error);
 GPtrArray *evo_folder_list_messages (EvoFolder *folder, gboolean refresh, GError **error);
 GPtrArray *evo_folder_search_messages (EvoFolder *folder, const gchar *query, gboolean refresh, GError **error);
 EvoMessage *evo_folder_read_message (EvoFolder *folder, const gchar *uid, const gchar *save_dir, GError **error);
+gboolean evo_folder_export_message (EvoFolder *folder, const gchar *uid, const gchar *path, GError **error);
 gboolean evo_folder_mark_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoMessageFlag mask, EvoFlagOp op, GError **error);
 gboolean evo_folder_move_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoFolder *dest_folder, GError **error);
 gboolean evo_folder_copy_messages (EvoFolder *folder, const gchar * const *uids, guint n_uids, EvoFolder *dest_folder, GError **error);
