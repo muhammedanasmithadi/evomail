@@ -546,6 +546,9 @@ cmd_reply (EvoApp *app, gchar *uid, GError **error)
 	if (store == NULL)
 		return FALSE;
 
+	if (opt_folder == NULL || g_strcmp0(opt_folder, evo_config_get_default_folder()) == 0)
+		opt_folder = "inbox";
+
 	folder = evo_folder_open (store, opt_folder, error);
 	if (folder == NULL) {
 		evo_store_close (store);
@@ -632,6 +635,9 @@ cmd_forward (EvoApp *app, gchar *uid, GError **error)
 	store = evo_store_open (app, account, error);
 	if (store == NULL)
 		return FALSE;
+
+	if (opt_folder == NULL || g_strcmp0(opt_folder, evo_config_get_default_folder()) == 0)
+		opt_folder = "inbox";
 
 	folder = evo_folder_open (store, opt_folder, error);
 	if (folder == NULL) {
@@ -773,6 +779,8 @@ cmd_export (EvoApp *app, gchar *uid, GError **error)
 	}
 
 	store = evo_store_open (app, account, error);
+	if (opt_folder == NULL || g_strcmp0(opt_folder, evo_config_get_default_folder()) == 0)
+		opt_folder = "inbox";
 	if (store == NULL)
 		return FALSE;
 
