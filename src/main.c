@@ -975,7 +975,10 @@ cmd_config (EvoApp *app, GError **error)
 				     opt_config_set_account);
 			return FALSE;
 		}
-		g_print ("Default account set to %s\n", opt_config_set_account);
+		if (opt_json)
+			g_print ("{\"default_account\":\"%s\"}\n", opt_config_set_account);
+		else
+			g_print ("Default account set to %s\n", opt_config_set_account);
 		changed = TRUE;
 	}
 
@@ -986,7 +989,10 @@ cmd_config (EvoApp *app, GError **error)
 				     opt_config_set_folder);
 			return FALSE;
 		}
-		g_print ("Default folder set to %s\n", opt_config_set_folder);
+		if (opt_json)
+			g_print ("{\"default_folder\":\"%s\"}\n", opt_config_set_folder);
+		else
+			g_print ("Default folder set to %s\n", opt_config_set_folder);
 		changed = TRUE;
 	}
 
@@ -995,15 +1001,21 @@ cmd_config (EvoApp *app, GError **error)
 		const gchar *def_account = evo_config_get_default_account ();
 		const gchar *def_folder = evo_config_get_default_folder ();
 
-		g_print ("Current configuration:\n");
-		if (def_account != NULL)
-			g_print ("  default account: %s\n", def_account);
-		else
-			g_print ("  default account: (none)\n");
-		if (def_folder != NULL)
-			g_print ("  default folder: %s\n", def_folder);
-		else
-			g_print ("  default folder: (none)\n");
+		if (opt_json) {
+			g_print ("{\"default_account\":\"%s\",\"default_folder\":\"%s\"}\n",
+				 def_account ? def_account : "",
+				 def_folder ? def_folder : "");
+		} else {
+			g_print ("Current configuration:\n");
+			if (def_account != NULL)
+				g_print ("  default account: %s\n", def_account);
+			else
+				g_print ("  default account: (none)\n");
+			if (def_folder != NULL)
+				g_print ("  default folder: %s\n", def_folder);
+			else
+				g_print ("  default folder: (none)\n");
+		}
 	}
 
 	return TRUE;
