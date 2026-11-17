@@ -409,25 +409,29 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 	gchar *forward_body;
 	gchar *original_text;
 
-	message = camel_mime_message_new ();
-
 	from = camel_internet_address_new ();
 	camel_internet_address_add (from,
 				    account->name != NULL ? account->name : "",
 				    account->email != NULL ? account->email : "");
 	camel_mime_message_set_from (message, from);
-	g_object_unref (from);
 
 	to_addr = parse_address (to, "To", error);
-	if (to_addr == NULL)
+	if (to_addr == NULL) {
+		g_object_unref (message);
+		g_object_unref (from);
 		return NULL;
+	}
 	cc_addr = parse_address (cc, "Cc", error);
 	if (cc_addr == NULL) {
+		g_object_unref (message);
+		g_object_unref (from);
 		g_object_unref (to_addr);
 		return NULL;
 	}
 	bcc_addr = parse_address (bcc, "Bcc", error);
 	if (bcc_addr == NULL) {
+		g_object_unref (message);
+		g_object_unref (from);
 		g_object_unref (to_addr);
 		g_object_unref (cc_addr);
 		return NULL;
@@ -438,6 +442,7 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 	    camel_address_length (CAMEL_ADDRESS (bcc_addr)) == 0) {
 		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 				     "No recipients given. Use --to, --cc, or --bcc.");
+		g_object_unref (from);
 		g_object_unref (bcc_addr);
 		g_object_unref (cc_addr);
 		g_object_unref (to_addr);
@@ -494,6 +499,7 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 			CamelMimePart *attachment = make_attachment_part (path, error);
 
 			if (attachment == NULL) {
+				g_object_unref (from);
 				g_object_unref (bcc_addr);
 				g_object_unref (cc_addr);
 				g_object_unref (to_addr);
@@ -510,6 +516,7 @@ build_forward_message (EvoAccount *account, EvoMessage *original,
 	camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (body_part));
 	g_object_unref (body_part);
 	g_object_unref (multipart);
+	g_object_unref (from);
 	g_object_unref (bcc_addr);
 	g_object_unref (cc_addr);
 	g_object_unref (to_addr);
@@ -777,7 +784,6 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 {
 	CamelMimeMessage *message = camel_mime_message_new ();
 	CamelInternetAddress *from;
-	CamelInternetAddress *to_recipient;
 	CamelMimePart *body_part;
 	CamelMultipart *multipart;
 	CamelMimePart *text_part;
@@ -790,33 +796,40 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	CamelInternetAddress *cc_addr;
 	CamelInternetAddress *bcc_addr;
 
-	message = camel_mime_message_new ();
-
 	from = camel_internet_address_new ();
 	camel_internet_address_add (from,
 				    account->name != NULL ? account->name : "",
 				    account->email != NULL ? account->email : "");
 	camel_mime_message_set_from (message, from);
-	g_object_unref (from);
 
-	to_recipient = camel_internet_address_new ();
-	to_addr = parse_address (to, "To", error);
-	if (to_addr == NULL)
+	if (to == NULL || *to == '\0') {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				     "No recipient given. Use --to ADDRESS.");
+		g_object_unref (from);
+		g_object_unref (message);
 		return FALSE;
-	camel_internet_address_add (to_recipient, "", to != NULL ? to : "");
-	g_object_unref (to_addr);
-	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_recipient);
-	g_object_unref (to_recipient);
+	}
+
+	to_addr = parse_address (to, "To", error);
+	if (to_addr == NULL) {
+		g_object_unref (from);
+		g_object_unref (message);
+		return FALSE;
+	}
 
 	cc_addr = parse_address (cc, "Cc", error);
 	if (cc_addr == NULL) {
+		g_object_unref (from);
 		g_object_unref (to_addr);
+		g_object_unref (message);
 		return FALSE;
 	}
 	bcc_addr = parse_address (bcc, "Bcc", error);
 	if (bcc_addr == NULL) {
+		g_object_unref (from);
 		g_object_unref (to_addr);
 		g_object_unref (cc_addr);
+		g_object_unref (message);
 		return FALSE;
 	}
 
@@ -912,6 +925,7 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (body_part));
 	g_object_unref (body_part);
 	g_object_unref (multipart);
+	g_object_unref (from);
 	g_free (orig_str);
 
 	return evo_send_message_raw (app, account, message,
