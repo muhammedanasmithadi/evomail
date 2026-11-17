@@ -35,8 +35,11 @@ static gchar *opt_subject = NULL;
 static gchar *opt_body = NULL;
 static gchar *opt_body_file = NULL;
 static gchar **opt_attach = NULL;
+static gchar *opt_signature = NULL;
+static gchar *opt_signature_file = NULL;
 static gboolean opt_dry_run = FALSE;
 static gboolean opt_save_copy = TRUE;
+static gboolean opt_draft = FALSE;
 static gboolean opt_version = FALSE;
 static gboolean opt_reply = FALSE;
 static gboolean opt_reply_all = FALSE;
@@ -96,10 +99,16 @@ static const GOptionEntry entries[] = {
 	  "Send: message body", "TEXT" },
 	{ "body-file", 0, 0, G_OPTION_ARG_FILENAME, &opt_body_file,
 	  "Send: read the message body from a file", "FILE" },
+	{ "signature", 0, 0, G_OPTION_ARG_STRING, &opt_signature,
+	  "Send: append signature text", "TEXT" },
+	{ "signature-file", 0, 0, G_OPTION_ARG_FILENAME, &opt_signature_file,
+	  "Send: read signature from a file", "FILE" },
 	{ "attach", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_attach,
 	  "Send: attach a file (repeatable)", "FILE" },
 	{ "dry-run", 0, 0, G_OPTION_ARG_NONE, &opt_dry_run,
 	  "Send: build the message and print a summary without sending", NULL },
+	{ "draft", 0, 0, G_OPTION_ARG_NONE, &opt_draft,
+	  "Send: save to Drafts folder instead of sending", NULL },
 	{ "no-save-copy", 0, G_OPTION_FLAG_REVERSE, G_OPTION_ARG_NONE, &opt_save_copy,
 	  "Send: do not append a copy to the Sent folder", NULL },
 	{ "reply", 0, 0, G_OPTION_ARG_NONE, &opt_reply,
@@ -474,7 +483,8 @@ cmd_send (EvoApp *app, GError **error)
 
 	success = evo_send (app, account, opt_to, opt_cc, opt_bcc,
 			    opt_subject, body, opt_html, attach_paths,
-			    opt_dry_run, opt_save_copy, opt_json, error);
+			    opt_dry_run, opt_save_copy, opt_json,
+			    opt_draft, error);
 
 	if (attach_paths != NULL)
 		g_ptr_array_unref (attach_paths);
