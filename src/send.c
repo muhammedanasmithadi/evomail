@@ -25,6 +25,36 @@ parse_address (const gchar *raw, const gchar *kind, GError **error)
 	return address;
 }
 
+/* Extract just the email address from a "Name <email>" or just "email" string */
+static gchar *
+extract_email_address (const gchar *raw)
+{
+	if (raw == NULL || *raw == '\0')
+		return NULL;
+
+	const gchar *lt = strchr (raw, '<');
+	const gchar *gt = lt != NULL ? strchr (lt + 1, '>') : NULL;
+
+	if (lt != NULL && gt != NULL && gt > lt + 1) {
+		gsize len = gt - lt - 1;
+		gchar *email = g_strndup (lt + 1, len);
+		/* Trim whitespace */
+		gchar *start = email;
+		while (*start == ' ' || *start == '\t') start++;
+		gchar *end = start + strlen (start) - 1;
+		while (end > start && (*end == ' ' || *end == '\t')) *end = '\0';
+		return start;
+	}
+
+	/* No angle brackets, treat whole string as email */
+	gchar *email = g_strdup (raw);
+	gchar *start = email;
+	while (*start == ' ' || *start == '\t') start++;
+	gchar *end = start + strlen (start) - 1;
+	while (end > start && (*end == ' ' || *end == '\t')) *end = '\0';
+	return start;
+}
+
 static CamelMimePart *
 make_text_part (const gchar *text, const gchar *mime_type)
 {
@@ -302,8 +332,10 @@ build_reply_message (EvoAccount *account, EvoMessage *original,
 	camel_mime_message_set_from (message, from);
 	g_object_unref (from);
 
+	gchar *to_addr = extract_email_address (original->from);
 	to = camel_internet_address_new ();
-	camel_internet_address_add (to, "", original->from != NULL ? original->from : "");
+	camel_internet_address_add (to, "", to_addr != NULL ? to_addr : "");
+	g_free (to_addr);
 	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to);
 	g_object_unref (to);
 
@@ -695,7 +727,7 @@ evo_send (EvoApp *app, EvoAccount *account,
 
 gboolean
 evo_send_reply (EvoApp *app, EvoAccount *account, EvoMessage *original,
-		const gchar *body, gboolean html, GPtrArray *attach_paths,
+		const gchar *to, const gchar *body, gboolean html, GPtrArray *attach_paths,
 		gboolean dry_run, gboolean save_copy, gboolean json,
 		gboolean reply_all,
 		GError **error)
@@ -705,10 +737,13 @@ evo_send_reply (EvoApp *app, EvoAccount *account, EvoMessage *original,
 	if (message == NULL)
 		return FALSE;
 
-	return evo_send_message_raw (app, account, message,
-				     original->from != NULL ? original->from : "",
+	gchar *to_addr = to != NULL && *to != '\0' ? g_strdup(to) : extract_email_address (original->from);
+	gboolean result = evo_send_message_raw (app, account, message,
+				     to_addr != NULL ? to_addr : "",
 				     original->subject != NULL ? original->subject : "",
 				     dry_run, save_copy, json, error);
+	g_free (to_addr);
+	return result;
 }
 
 gboolean
@@ -765,13 +800,14 @@ evo_send_forward_as_attachment (EvoApp *app, EvoAccount *account,
 	g_object_unref (from);
 
 	to_recipient = camel_internet_address_new ();
-	camel_internet_address_add (to_recipient, "", original->from != NULL ? original->from : "");
-	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_recipient);
-	g_object_unref (to_recipient);
-
 	to_addr = parse_address (to, "To", error);
 	if (to_addr == NULL)
 		return FALSE;
+	camel_internet_address_add (to_recipient, "", to != NULL ? to : "");
+	g_object_unref (to_addr);
+	camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_recipient);
+	g_object_unref (to_recipient);
+
 	cc_addr = parse_address (cc, "Cc", error);
 	if (cc_addr == NULL) {
 		g_object_unref (to_addr);

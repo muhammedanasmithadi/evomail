@@ -563,7 +563,7 @@ cmd_reply (EvoApp *app, gchar *uid, GError **error)
 	}
 
 	success = evo_send_reply (app, account, message,
-				  opt_body, opt_html, reply_attach_paths,
+				  opt_to, opt_body, opt_html, reply_attach_paths,
 				  opt_dry_run, opt_save_copy, opt_json,
 				  opt_reply_all,
 				  error);
