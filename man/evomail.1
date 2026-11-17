@@ -1,0 +1,275 @@
+.EVMAIL 1 "Evomail" "Evolution Mail CLI"
+
+.SH NAME
+evomail \- CLI for Evolution mail client using native EDS/Camel stack
+
+.SH SYNOPSIS
+.evomail [OPTION...] COMMAND [ARGS]
+.br
+.evomail accounts
+.br
+.evomail folders [OPTIONS...]
+.br
+.evomail list [OPTIONS...]
+.br
+.evomail search QUERY [OPTIONS...]
+.br
+.evomail read UID [OPTIONS...]
+.br
+.evomail search QUERY [OPTIONS...]
+.br
+.evomail export UID -o FILE
+.br
+.evomail delete UID...
+.br
+.evomail send [OPTIONS...]
+.br
+.evomail reply UID [OPTIONS...]
+.br
+.evomail forward UID [OPTIONS...]
+.br
+.evomail forward-as-attachment UID [OPTIONS...]
+.br
+.evomail move UID... --move-to FOLDER
+.br
+.evomail copy UID... --copy-to FOLDER
+.br
+.evomail config [OPTIONS...]
+.br
+.evomail --config-set-account EMAIL
+.br
+.evomail --config-set-folder FOLDER
+.br
+.evomail --config-wizard
+.br
+.evomail --version
+.br
+.evomail --help
+
+.SH DESCRIPTION
+evomail is a command-line interface for the GNOME Evolution mail client.
+It uses Evolution's native EDS/Camel stack rather than reimplementing IMAP/SMTP,
+providing native OAuth2 authentication, native folder management, and native
+message handling.
+
+.SH COMMANDS
+
+.TP
+accounts
+List all Evolution mail accounts with their UIDs, backends, hosts, ports,
+and SMTP transport UIDs.
+
+.TP
+folders [OPTIONS]
+List folders for an account.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --json              Print JSON output
+
+.TP
+list [OPTIONS]
+List messages in a folder (default: newest 20).
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias (inbox, sent, drafts, trash, junk, all)
+  --limit N           Maximum messages to show (default: 20)
+  --unread            List only unread messages
+  --no-refresh        Do not synchronize the folder before listing
+  --json              Print JSON output
+
+.TP
+search QUERY [OPTIONS]
+Search a folder for messages.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --limit N           Maximum messages to show
+  --no-refresh        Do not synchronize the folder before listing
+  --json              Print JSON output
+
+.TP
+read UID [OPTIONS]
+Print one message.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --json              Print JSON output
+  --html              Show HTML part
+  --save-attachments DIR   Save attachments to directory
+  --mark-seen         Mark the message as seen after reading
+
+.TP
+search QUERY [OPTIONS]
+Search a folder for messages.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --limit N           Maximum messages to show
+  --no-refresh        Do not synchronize the folder before listing
+  --json              Print JSON output
+
+.TP
+export UID -o FILE
+Export a raw message to a file.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --output FILE       Save raw message to this file
+  --json              Print JSON output
+
+.TP
+delete UID...
+Delete and expunge messages.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --json              Print JSON output
+
+.TP
+send [OPTIONS]
+Compose and send a message.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --to ADDRESSES      To recipients
+  --cc ADDRESSES      Cc recipients
+  --bcc ADDRESSES     Bcc recipients
+  --subject TEXT      Subject
+  --body TEXT         Message body
+  --body-file FILE    Read body from file
+  --edit              Compose body in $EDITOR
+  --draft             Save to Drafts folder instead of sending
+  --signature TEXT    Append signature text
+  --signature-file FILE   Read signature from file
+  --attach FILE       Attach file (repeatable)
+  --dry-run           Build message and print summary without sending
+  --no-save-copy      Do not append copy to Sent folder
+  --json              Print JSON output
+  --html              Treat body as HTML
+  --help              Show help
+
+.TP
+reply UID [OPTIONS]
+Reply to a message.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --to ADDRESSES      To recipients
+  --cc ADDRESSES      Cc recipients
+  --bcc ADDRESSES     Bcc recipients
+  --subject TEXT      Subject
+  --body TEXT         Message body
+  --body-file FILE    Read body from file
+  --edit              Compose body in $EDITOR
+  --draft             Save to Drafts folder instead of sending
+  --signature TEXT    Append signature text
+  --signature-file FILE   Read signature from file
+  --attach FILE       Attach file (repeatable)
+  --dry-run           Build message and print summary without sending
+  --no-save-copy      Do not append copy to Sent folder
+  --json              Print JSON output
+  --html              Treat body as HTML
+  --reply-all         Reply to all recipients
+  --help              Show help
+
+.TP
+forward UID [OPTIONS]
+Forward a message.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --to ADDRESSES      To recipients
+  --cc ADDRESSES      Cc recipients
+  --bcc ADDRESSES     Bcc recipients
+  --subject TEXT      Subject
+  --body TEXT         Message body
+  --body-file FILE    Read body from file
+  --edit              Compose body in $EDITOR
+  --draft             Save to Drafts folder instead of sending
+  --signature TEXT    Append signature text
+  --signature-file FILE   Read signature from file
+  --attach FILE       Attach file (repeatable)
+  --dry-run           Build message and print summary without sending
+  --no-save-copy      Do not append copy to Sent folder
+  --json              Print JSON output
+  --html              Treat body as HTML
+  --help              Show help
+
+.TP
+forward-as-attachment UID [OPTIONS]
+Forward a message as .eml attachment.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --to ADDRESSES      To recipients
+  --cc ADDRESSES      Cc recipients
+  --bcc ADDRESSES     Bcc recipients
+  --subject TEXT      Subject
+  --body TEXT         Message body
+  --body-file FILE    Read body from file
+  --edit              Compose body in $EDITOR
+  --draft             Save to Drafts folder instead of sending
+  --signature TEXT    Append signature text
+  --signature-file FILE   Read signature from file
+  --attach FILE       Attach file (repeatable)
+  --dry-run           Build message and print summary without sending
+  --no-save-copy      Do not append copy to Sent folder
+  --json              Print JSON output
+  --html              Treat body as HTML
+  --help              Show help
+
+.TP
+move UID... --move-to FOLDER
+Move messages to a folder.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --move-to FOLDER    Destination folder
+  --json              Print JSON output
+
+.TP
+copy UID... --copy-to FOLDER
+Copy messages to a folder.
+Options:
+  --account ACCOUNT   Account email, name, UID, or UID prefix
+  --folder FOLDER     Folder name or alias
+  --copy-to FOLDER    Destination folder
+  --json              Print JSON output
+
+.TP
+config [OPTIONS]
+Configure evomail settings.
+Options:
+  --json              Print JSON output
+
+.TP
+--config-set-account ACCOUNT
+Set default account.
+
+.TP
+--config-set-folder FOLDER
+Set default folder.
+
+.TP
+--config-wizard
+Interactive setup wizard.
+
+.SH ENVIRONMENT
+.TP
+EVOMAIL_ACCOUNT
+Selects the default account when not specified on command line.
+
+.SH FILES
+.TP
+~/.config/evomail/config.ini
+Configuration file with default account and folder settings.
+
+.SH AUTHOR
+Written by Muhammed Anas.
+
+.SH "REPORTING BUGS"
+Report bugs at: https://github.com/muhammedanasmithadi/evomail/issues
+
+.SH COPYRIGHT
+Copyright (C) 2026 Muhammed Anas
+License: MIT

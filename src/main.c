@@ -219,12 +219,16 @@ cmd_folders (EvoApp *app, GError **error)
 static void
 filter_unread (GPtrArray *messages)
 {
-	for (guint i = messages->len; i > 0; i--) {
-		EvoMessage *msg = g_ptr_array_index (messages, i - 1);
-
-		if (msg->flags & CAMEL_MESSAGE_SEEN)
-			g_ptr_array_remove_index (messages, i - 1);
+	guint write_idx = 0;
+	for (guint i = 0; i < messages->len; i++) {
+		EvoMessage *msg = g_ptr_array_index (messages, i);
+		if (!(msg->flags & CAMEL_MESSAGE_SEEN)) {
+			if (i != write_idx)
+				g_ptr_array_index (messages, write_idx) = g_ptr_array_index (messages, i);
+			write_idx++;
+		}
 	}
+	messages->len = write_idx;
 }
 
 static void
